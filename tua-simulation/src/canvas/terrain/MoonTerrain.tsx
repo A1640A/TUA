@@ -35,16 +35,28 @@ import { TERRAIN_SCALE, TERRAIN_HEIGHT_SCALE, GRID_SIZE } from '@/lib/constants'
  *   World Y = elevation (up)
  */
 
-// ─── Constants ─────────────────────────────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────
 /**
  * Virtual sphere radius for the planetary-curve bake.
  * Curvature dip at terrain edge = TERRAIN_SCALE²/(8·R).
- * R=360:  55²/2880 ≈ 1.05 units — clearly visible horizon bow.
- * R=600:  55²/4800 ≈ 0.63 units — subtle, barely perceptible.
+ * With TERRAIN_SCALE=80:
+ *   R=200: 80²/1600 = 4.00 units — DANGEROUS: objects sink underground.
+ *   R=580: 80²/4640 ≈ 1.38 units — clearly visible horizon bow, safe.
+ *   R=900: 80²/7200 ≈ 0.89 units — very subtle.
+ * R=580 chosen: strong visual impact without geometry conflicts.
+ *
+ * IMPORTANT: The curvature is applied ONLY through getWorldY() (vertex Y offset).
+ * The mesh has NO rotation-x tilt. This guarantees that the visual surface and
+ * all physics/navigation calculations use the IDENTICAL coordinate frame.
  */
-const SPHERE_RADIUS = 360;
-/** Rover chassis clearance above raw vertex Y (world units). */
-export const TERRAIN_GROUND_OFFSET = 0.22;
+const SPHERE_RADIUS = 580;
+/**
+ * Rover chassis clearance above raw vertex Y (world units).
+ * Wheel cylinder radius = 0.22. We add 0.06 clearance so the
+ * tyre tread (not the hub) is flush with the surface.
+ */
+export const TERRAIN_GROUND_OFFSET = 0.28;
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

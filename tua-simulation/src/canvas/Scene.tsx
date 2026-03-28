@@ -82,8 +82,8 @@ function SceneContent() {
         makeDefault
         enabled={isOrbit}
         minDistance={6}
-        maxDistance={70}
-        maxPolarAngle={Math.PI / 2.05}
+        maxDistance={100}
+        maxPolarAngle={Math.PI / 2.1}
         enablePan={isOrbit && !placing}
         enableRotate={isOrbit && !placing}
         enableZoom={isOrbit}

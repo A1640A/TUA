@@ -525,8 +525,12 @@ export default function ObstacleField() {
         const isCrater  = obs.variant === 'crater';
         const isAntenna = obs.variant === 'antenna';
         const isDust    = obs.variant === 'dust-mound';
-        // Y offset: craters sit at terrain level; boulders/mounds lifted by half-height
-        const yPos = obs.worldPos[1] + (isCrater ? 0 : isAntenna ? 0.05 : cfg.ry);
+        // Y offset: craters sit at terrain level (their geometry is already at y≤0);
+        // Boulders/dust use cfg.rx (the actual mesh bounding radius) so the
+        // bottom of the geometry rests ON the surface, not cfg.ry which is smaller
+        // and caused the main body to sink into the terrain.
+        const meshR = isCrater ? 0 : isAntenna ? 0.05 : cfg.rx;
+        const yPos  = obs.worldPos[1] + meshR;
         const seed = obs.worldPos[0] * 13.7 + obs.worldPos[2] * 7.3;
 
         return (
