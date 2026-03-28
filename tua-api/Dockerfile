@@ -2,15 +2,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
-# Projeyi kopyala ve restore et
-COPY tua-api.csproj ./
-RUN dotnet restore
-
-# Kaynak kodun tamamını kopyala
+# Tüm kaynak kodunu kopyala
 COPY . .
 
-# Release olarak yayınla
-RUN dotnet publish tua-api.csproj -c Release -o /app/publish --no-restore
+# Restore + Publish tek adımda (cache uyumsuzluğunu önler)
+RUN dotnet publish tua-api.csproj -c Release -o /app/publish
 
 # ── Runtime Stage ─────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
