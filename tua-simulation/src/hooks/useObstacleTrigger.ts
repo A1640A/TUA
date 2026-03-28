@@ -6,47 +6,78 @@ import { useRouteCalculation } from './useRouteCalculation';
 import { TERRAIN_SCALE, GRID_SIZE } from '@/lib/constants';
 
 /**
- * Watches the obstacle list for changes while the rover is actively navigating.
- * When a new obstacle is added during the `animating` state, this hook:
+ * Watches the obstacle list and triggers a dynamic reroute when a new obstacle
+ * is added while the rover is actively navigating.
  *
- * 1. Sets status to `rerouting`.
- * 2. Updates the start waypoint to the rover's current approximate grid cell.
- * 3. Fires a new route calculation with `returnVisited = true` so the UI
- *    plays the A* scan animation on the bypass path.
+ * KEY DESIGN: Uses Zustand's `getState()` for all reads of frequently-changing
+ * values (status, roverState.position) to completely avoid stale closures:
+ *   - `status` is read imperatively at trigger time, not from a React render snapshot.
+ *   - `roverState.position` is read imperatively without subscribing to it
+ *     (subscribing would cause a re-render every animation frame).
  *
- * This creates the "drop a boulder in front of the rover → it stops and finds
- * a new way around" behaviour that is the centrepiece of the demo.
+ * Must be called OUTSIDE the R3F <Canvas> (SimulationPage level) so it runs in
+ * the standard React tree where Zustand subscriptions are not throttled by the
+ * WebGL render loop.
  */
 export function useObstacleTrigger() {
-  const obstacles       = useObstacleStore(s => s.obstacles);
-  const prevCountRef    = useRef(obstacles.length);
-  const { status, roverState, setStatus, setWaypoint } = useSimulationStore();
-  const { calculate }   = useRouteCalculation();
+  // Only subscribe to obstacle count — this is the sole trigger.
+  const obstacleCount = useObstacleStore(s => s.obstacles.length);
+  const prevCountRef  = useRef(0);
+  const pendingRef    = useRef(false);
+
+  // calculate must be stable enough to be a dependency — it changes when
+  // obstacles changes (its useCallback dep), which is exactly when we need it.
+  const { calculate } = useRouteCalculation();
 
   useEffect(() => {
-    const prevCount = prevCountRef.current;
-    prevCountRef.current = obstacles.length;
+    // Obstacle was REMOVED or count unchanged — skip.
+    if (obstacleCount <= prevCountRef.current) {
+      prevCountRef.current = obstacleCount;
+      return;
+    }
+    prevCountRef.current = obstacleCount;
 
-    // Only trigger reroute when an obstacle was *added* (not removed) while animating.
-    if (obstacles.length <= prevCount) return;
-    if (status !== 'animating') return;
+    // -- Imperative reads to avoid stale closures --
+    // Zustand getState() always returns the current store snapshot,
+    // regardless of React's render cycle.
+    const simState = useSimulationStore.getState();
 
-    // Snap rover's current world position to nearest grid cell.
-    const [rx, , rz] = roverState.position;
-    const gx = Math.round((rx / TERRAIN_SCALE + 0.5) * GRID_SIZE);
-    const gz = Math.round((rz / TERRAIN_SCALE + 0.5) * GRID_SIZE);
-    const clampedX = Math.max(0, Math.min(GRID_SIZE - 1, gx));
-    const clampedZ = Math.max(0, Math.min(GRID_SIZE - 1, gz));
+    // Only reroute while the rover is actively driving.
+    if (simState.status !== 'animating') return;
 
-    setStatus('rerouting');
-    setWaypoint('start', { x: clampedX, z: clampedZ });
+    // Prevent concurrent reroutes if the user drops multiple obstacles quickly.
+    if (pendingRef.current) return;
+    pendingRef.current = true;
 
-    // Brief pause so the user sees the "rerouting" banner before the API call.
-    const timer = setTimeout(() => {
-      calculate({ returnVisited: true });
-    }, 600);
+    // Convert world-space rover position to grid cell (imperative, no stale closure).
+    const [rx, , rz] = simState.roverState.position;
+    const clampedX = Math.max(0, Math.min(GRID_SIZE - 1,
+      Math.round((rx / TERRAIN_SCALE + 0.5) * GRID_SIZE),
+    ));
+    const clampedZ = Math.max(0, Math.min(GRID_SIZE - 1,
+      Math.round((rz / TERRAIN_SCALE + 0.5) * GRID_SIZE),
+    ));
 
-    return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [obstacles.length]);
+    // Signal the HUD and stop the animation loop.
+    simState.setStatus('rerouting');
+    // Move start waypoint to rover's current position.
+    simState.setWaypoint('start', { x: clampedX, z: clampedZ });
+
+    // Short pause — shows the "Rerouting" HUD banner before the API fires,
+    // giving judges a visible "thinking" moment.
+    const timer = setTimeout(async () => {
+      try {
+        await calculate({ returnVisited: true });
+      } finally {
+        pendingRef.current = false;
+      }
+    }, 500);
+
+    return () => {
+      clearTimeout(timer);
+      pendingRef.current = false;
+    };
+  // calculate is stable (empty useCallback deps in useRouteCalculation),
+  // so this effect only fires when obstacleCount actually changes.
+  }, [obstacleCount, calculate]);
 }

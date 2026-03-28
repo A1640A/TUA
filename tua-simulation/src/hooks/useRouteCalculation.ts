@@ -1,5 +1,5 @@
 'use client';
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useSimulationStore } from '@/store/simulationStore';
 import { useTerrainStore } from '@/store/terrainStore';
 import { useObstacleStore } from '@/store/obstacleStore';
@@ -9,25 +9,40 @@ import { buildRouteRequest } from '@/services/terrain/terrainSerializer';
 /**
  * Encapsulates all logic for calling the C# A* route API.
  *
- * Supports both initial calculation and mid-drive reroutes triggered by
- * obstacle placement. When `returnVisited` is true (reroute path), the
- * response `visitedNodes` array is stored in the simulation store for
- * the real-time scan-animation overlay.
+ * The returned `calculate` function is intentionally stabilised via useRef so
+ * that hooks depending on it (e.g. useObstacleTrigger) do not trigger on every
+ * obstacle-add re-render. The ref always points to the latest closure, so all
+ * store values (waypoints, obstacles, terrain, costWeights) are current at the
+ * time calculate() is actually invoked.
  *
  * @returns `{ calculate }` — async function that fires the API call.
  */
 export function useRouteCalculation() {
   const { waypoints, costWeights, setStatus, setRouteResult, setError, setVisitedNodes, startMissionClock } =
     useSimulationStore();
-  const { terrain } = useTerrainStore();
+  const { terrain }   = useTerrainStore();
   const { obstacles } = useObstacleStore();
 
+  // Keep the latest closure in a ref so the stable callback below always has
+  // access to current values without needing to be re-created on every change.
+  const latestRef = useRef({ waypoints, terrain, costWeights, obstacles,
+    setStatus, setRouteResult, setError, setVisitedNodes, startMissionClock });
+  latestRef.current = { waypoints, terrain, costWeights, obstacles,
+    setStatus, setRouteResult, setError, setVisitedNodes, startMissionClock };
+
+  // Stable reference — never changes between renders.
+  // Reads everything from latestRef.current at invocation time.
   const calculate = useCallback(async (options: { returnVisited?: boolean } = {}) => {
+    const {
+      waypoints, terrain, costWeights, obstacles,
+      setStatus, setRouteResult, setError, setVisitedNodes, startMissionClock,
+    } = latestRef.current;
+
     const start = waypoints.find(w => w.type === 'start');
     const end   = waypoints.find(w => w.type === 'end');
 
-    if (!start || !end) { setError('Başlangıç ve bitiş noktası seçin.');   return; }
-    if (!terrain)        { setError('Arazi verisi henüz hazır değil.');     return; }
+    if (!start || !end) { setError('Başlangıç ve bitiş noktası seçin.');  return; }
+    if (!terrain)        { setError('Arazi verisi henüz hazır değil.');    return; }
 
     setStatus('calculating');
     setError(null);
@@ -54,14 +69,15 @@ export function useRouteCalculation() {
 
       startMissionClock();
       setRouteResult(response);
-      // If visited nodes were returned, play scan animation first, then animate.
       setStatus(response.visitedNodes?.length ? 'scanning' : 'animating');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Bilinmeyen hata';
       setError(msg);
       setStatus('error');
     }
-  }, [waypoints, terrain, costWeights, obstacles, setStatus, setRouteResult, setError, setVisitedNodes, startMissionClock]);
+  // Stable: empty deps — all values read from latestRef.current inside.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return { calculate };
 }

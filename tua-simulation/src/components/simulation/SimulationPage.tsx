@@ -4,16 +4,23 @@ import ControlPanel from './ControlPanel';
 import InfoPanel from './InfoPanel';
 import HUD from '@/components/hud/HUD';
 import ErrorBoundary from '@/components/ui/ErrorBoundary';
+import { useObstacleTrigger } from '@/hooks/useObstacleTrigger';
 
 // Canvas must be client-only (Three.js requires window access)
 const Scene = dynamic(() => import('@/canvas/Scene'), { ssr: false });
 
 /**
  * Root simulation page layout.
- * Fullscreen canvas with HUD overlay and side panels.
- * Wrapped in ErrorBoundary to catch 3D render crashes gracefully.
+ *
+ * useObstacleTrigger is called HERE (outside <Canvas>) so it runs in the
+ * standard React render tree. This is critical — inside the R3F Canvas,
+ * Zustand subscriptions can be throttled by the WebGL render loop, causing
+ * the trigger to miss status changes or read stale values.
  */
 export default function SimulationPage() {
+  // Obstacle → reroute watcher lives outside Canvas for reliable Zustand access.
+  useObstacleTrigger();
+
   return (
     <ErrorBoundary>
       <div className="relative w-full h-screen overflow-hidden bg-[#080810]">
