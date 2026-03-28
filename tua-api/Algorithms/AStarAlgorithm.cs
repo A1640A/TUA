@@ -58,7 +58,7 @@ public static class AStarAlgorithm
         {
             var trivialPoint = new RoutePoint(req.StartNode.X, req.StartNode.Z,
                 req.HeightMap.Length > startId ? req.HeightMap[startId] : 0f, 0f);
-            return new AStarResult([trivialPoint], 0f, [], isUnreachable: false);
+            return new AStarResult([trivialPoint], 0f, [], IsUnreachable: false);
         }
 
         gScore[startId] = 0f;
@@ -129,7 +129,7 @@ public static class AStarAlgorithm
         // Check reachability: end node must appear in the parent map (or equal start).
         if (!parent.ContainsKey(endId))
         {
-            return new AStarResult([], 0f, visited?.ToArray() ?? [], isUnreachable: true);
+            return new AStarResult([], 0f, visited?.ToArray() ?? [], IsUnreachable: true);
         }
 
         return ReconstructPath(parent, endId, gs, req.HeightMap, gScore, visited?.ToArray() ?? []);
@@ -167,7 +167,7 @@ public static class AStarAlgorithm
             return new RoutePoint(x, z, y, lc);
         }).ToList();
 
-        return new AStarResult(points, totalCost, visitedNodes, isUnreachable: false);
+        return new AStarResult(points, totalCost, visitedNodes, IsUnreachable: false);
     }
 
     // Internal node for the priority queue — value record for structural equality.
