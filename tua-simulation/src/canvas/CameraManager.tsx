@@ -2,20 +2,15 @@
 /**
  * CameraManager — First-Person / Orbit camera controller.
  *
- * Lives inside <Canvas> so it has full access to `useFrame` and `useThree`.
- *
- * In 'orbit' mode  → does nothing; OrbitControls governs the camera.
- * In 'fpv'   mode  → reads the rover's live world-space transform each frame,
- *                    positions the camera at the mast attachment point, and
- *                    applies the rover's full quaternion (yaw + pitch from terrain)
- *                    plus a subtle suspension-bob on the Y-axis.
+ * FPV Free-Look:
+ *   Click anywhere on the canvas while in FPV mode → Pointer Lock is requested.
+ *   MouseMove deltas update lookYaw / lookPitch offsets which are composed on
+ *   top of the rover's base quaternion every frame.
+ *   ESC (browser default) exits pointer lock; the look offsets smoothly reset.
  *
  * Transition:
- *   Orbit → FPV : lerp camera position from wherever it currently is into the
- *                 rover's mast position over ~60 frames (≈1 s at 60 fps).
- *   FPV → Orbit : lerp back to the snapshot that was captured when we left orbit.
- *
- * No additional npm packages are needed; all interpolation uses base THREE.js.
+ *   Orbit → FPV : position lerp + quaternion slerp over ~60 frames.
+ *   FPV → Orbit : lerp back to pre-transition snapshot.
  */
 import { useRef, useEffect } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
@@ -24,29 +19,29 @@ import { useSimulationStore } from '@/store/simulationStore';
 import { CAMERA_INITIAL_POSITION, CAMERA_FOV } from '@/lib/constants';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-/** FOV used in FPV mode — wider than orbit to simulate a rover wide-angle lens. */
-const FPV_FOV = 75;
+const FPV_FOV        = 75;
+const MAST_LOCAL     = new THREE.Vector3(0.3, 1.08, -0.3);
+const LERP_SPEED     = 0.055;
+const BOB_AMPLITUDE  = 0.035;
+const BOB_FREQUENCY  = 8.0;
 
-/** Mast-mounted camera position in rover-local space (front, above body). */
-const MAST_LOCAL = new THREE.Vector3(0.3, 1.08, -0.3);
+/** Mouse sensitivity for free-look (radians per pixel). */
+const LOOK_SENSITIVITY = 0.0022;
+/** Maximum pitch angle up/down (radians). */
+const MAX_PITCH = Math.PI / 2.2;  // ≈ 82°
+/** How fast look offsets return to centre when pointer lock is released. */
+const LOOK_RESET_SPEED = 0.06;
 
-/** Speed of the lerp blend (higher = faster snap). */
-const LERP_SPEED = 0.055;
-
-/** Maximum bobbing amplitude in Three.js units at full speed. */
-const BOB_AMPLITUDE = 0.035;
-
-/** Bobbing frequency in radians per second. */
-const BOB_FREQUENCY = 8.0;
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-const _mastWorld  = new THREE.Vector3();
-const _roverQuat  = new THREE.Quaternion();
-const _roverEuler = new THREE.Euler();
-const _bobOffset  = new THREE.Vector3();
-const _targetPos  = new THREE.Vector3();
-const _targetQuat = new THREE.Quaternion();
-const _forward    = new THREE.Vector3(0, 0, -1); // rover looks along -Z in its local frame
+// ── Module-level scratch objects (avoid per-frame GC) ─────────────────────────
+const _mastWorld   = new THREE.Vector3();
+const _roverQuat   = new THREE.Quaternion();
+const _roverEuler  = new THREE.Euler();
+const _lookQuat    = new THREE.Quaternion();
+const _lookEuler   = new THREE.Euler();
+const _bobOffset   = new THREE.Vector3();
+const _targetPos   = new THREE.Vector3();
+const _targetQuat  = new THREE.Quaternion();
+const _finalQuat   = new THREE.Quaternion();
 
 export default function CameraManager() {
   const { camera, gl } = useThree();
@@ -55,61 +50,113 @@ export default function CameraManager() {
   const roverState = useSimulationStore(s => s.roverState);
 
   // ── Transition state ──────────────────────────────────────────────────────
-  /** Snapshot of camera position just before every orbit → FPV transition. */
   const orbitPosSnap  = useRef(new THREE.Vector3(...CAMERA_INITIAL_POSITION));
-  /** Snapshot of camera quaternion just before transition. */
   const orbitQuatSnap = useRef(new THREE.Quaternion());
-  /** lerp progress [0, 1] — 0 = fully at source, 1 = fully at target. */
-  const transitionT   = useRef(1); // starts at 1 so first frame in orbit is instant
-  /** Previous mode so we can detect changes. */
+  const transitionT   = useRef(1);
   const prevMode      = useRef<'orbit' | 'fpv'>('orbit');
 
-  // ── React to mode changes ─────────────────────────────────────────────────
+  // ── Free-look state ───────────────────────────────────────────────────────
+  /** Accumulated yaw offset from mouse movement (radians). */
+  const lookYaw   = useRef(0);
+  /** Accumulated pitch offset from mouse movement (radians). */
+  const lookPitch = useRef(0);
+  /** Whether the browser Pointer Lock is currently active. */
+  const isLocked  = useRef(false);
+
+  // ── Pointer Lock setup ────────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = gl.domElement;
+
+    /** Request lock when user clicks the canvas in FPV mode. */
+    function onCanvasClick() {
+      if (cameraMode === 'fpv' && !isLocked.current) {
+        canvas.requestPointerLock();
+      }
+    }
+
+    /** Accumulate look deltas while pointer is locked. */
+    function onMouseMove(e: MouseEvent) {
+      if (!isLocked.current) return;
+      lookYaw.current   -= e.movementX * LOOK_SENSITIVITY;
+      lookPitch.current -= e.movementY * LOOK_SENSITIVITY;
+      // Clamp pitch so you can't flip the camera.
+      lookPitch.current = THREE.MathUtils.clamp(lookPitch.current, -MAX_PITCH, MAX_PITCH);
+    }
+
+    /** Track lock state changes. */
+    function onLockChange() {
+      isLocked.current = document.pointerLockElement === canvas;
+    }
+
+    canvas.addEventListener('click', onCanvasClick);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('pointerlockchange', onLockChange);
+
+    return () => {
+      canvas.removeEventListener('click', onCanvasClick);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('pointerlockchange', onLockChange);
+    };
+  }, [cameraMode, gl.domElement]);
+
+  // ── React to camera mode changes ─────────────────────────────────────────
   useEffect(() => {
     if (cameraMode === prevMode.current) return;
 
     if (cameraMode === 'fpv') {
-      // Snapshot the current orbit camera state before flying into FPV.
       orbitPosSnap.current.copy(camera.position);
       orbitQuatSnap.current.copy(camera.quaternion);
-      transitionT.current = 0; // start lerp from orbit → FPV
+      transitionT.current = 0;
     } else {
-      // Flying back to orbit — start from wherever the camera currently is.
+      // Leaving FPV — exit pointer lock if active and reset look offsets.
+      if (document.pointerLockElement === gl.domElement) {
+        document.exitPointerLock();
+      }
       transitionT.current = 0;
     }
 
     prevMode.current = cameraMode;
-  }, [cameraMode, camera]);
+  }, [cameraMode, camera, gl.domElement]);
 
   // ── Per-frame update ──────────────────────────────────────────────────────
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
 
-    // Build rover world-space quaternion from Euler rotation stored in state.
+    // Rover base quaternion from store Euler.
     _roverEuler.set(
       roverState.rotation[0],
       roverState.rotation[1],
       roverState.rotation[2],
-      'YXZ', // yaw first, then pitch — correct for a ground vehicle
+      'YXZ',
     );
     _roverQuat.setFromEuler(_roverEuler);
 
-    // Mast world position = rover position + local mast offset rotated by rover quat.
+    // Mast world position.
     _mastWorld.set(...roverState.position);
-    _mastWorld.y += 0; // base is already the terrain-sampled Y
     const mastOffset = MAST_LOCAL.clone().applyQuaternion(_roverQuat);
     _mastWorld.add(mastOffset);
 
-    // Suspension bob: sine wave on Y, amplitude scales with speed.
+    // Suspension bobbing.
     const bobY = Math.sin(t * BOB_FREQUENCY) * BOB_AMPLITUDE * Math.min(roverState.speed * 15, 1);
     _bobOffset.set(0, bobY, 0);
 
     if (cameraMode === 'fpv') {
-      // Target: mast world position + bob.
       _targetPos.copy(_mastWorld).add(_bobOffset);
 
-      // Target rotation: rover quaternion (terrain pitch + heading yaw are both baked in).
-      _targetQuat.copy(_roverQuat);
+      // ── Compose look offset on top of rover quaternion ──────────────────
+      // When pointer lock is NOT active, smoothly reset look back to centre.
+      if (!isLocked.current) {
+        lookYaw.current   *= (1 - LOOK_RESET_SPEED);
+        lookPitch.current *= (1 - LOOK_RESET_SPEED);
+      }
+
+      // Build look rotation: yaw around world-Y, pitch around local-X.
+      _lookEuler.set(lookPitch.current, lookYaw.current, 0, 'YXZ');
+      _lookQuat.setFromEuler(_lookEuler);
+
+      // Final camera quat = rover base × look offset.
+      _finalQuat.multiplyQuaternions(_roverQuat, _lookQuat);
+      _targetQuat.copy(_finalQuat);
 
       // Advance transition.
       if (transitionT.current < 1) {
@@ -120,42 +167,31 @@ export default function CameraManager() {
       camera.position.lerp(_targetPos, alpha);
       camera.quaternion.slerp(_targetQuat, alpha);
 
-      // Force FPV FOV during transition.
-      if ((camera as THREE.PerspectiveCamera).fov !== FPV_FOV) {
-        (camera as THREE.PerspectiveCamera).fov = THREE.MathUtils.lerp(
-          (camera as THREE.PerspectiveCamera).fov,
-          FPV_FOV,
-          alpha,
-        );
-        (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+      // Lerp FOV toward FPV value.
+      const camP = camera as THREE.PerspectiveCamera;
+      if (Math.abs(camP.fov - FPV_FOV) > 0.01) {
+        camP.fov = THREE.MathUtils.lerp(camP.fov, FPV_FOV, alpha);
+        camP.updateProjectionMatrix();
       }
 
     } else {
-      // Returning to orbit: lerp camera back to snapshotted position.
+      // Returning to orbit.
       if (transitionT.current < 1) {
         transitionT.current = Math.min(transitionT.current + LERP_SPEED * 0.8, 1);
         const alpha = easeInOutCubic(transitionT.current);
         camera.position.lerp(orbitPosSnap.current, alpha);
         camera.quaternion.slerp(orbitQuatSnap.current, alpha);
 
-        // Restore orbit FOV.
-        const targetFov = CAMERA_FOV;
-        (camera as THREE.PerspectiveCamera).fov = THREE.MathUtils.lerp(
-          (camera as THREE.PerspectiveCamera).fov,
-          targetFov,
-          alpha,
-        );
-        (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+        const camP = camera as THREE.PerspectiveCamera;
+        camP.fov = THREE.MathUtils.lerp(camP.fov, CAMERA_FOV, alpha);
+        camP.updateProjectionMatrix();
       }
-      // When transition finishes, OrbitControls takes over — no extra work needed.
     }
 
-    // Prevent touch/mouse from feeding OrbitControls while we own the camera.
-    // (OrbitControls is disabled via its `enabled` prop in Scene.tsx)
-    void gl; // referenced to prevent tree-shake
+    void gl;
   });
 
-  return null; // no JSX — pure imperative camera control
+  return null;
 }
 
 // ── Pure helpers ───────────────────────────────────────────────────────────────

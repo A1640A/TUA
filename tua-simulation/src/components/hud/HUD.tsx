@@ -52,6 +52,14 @@ export default function HUD() {
   const terrainOk = true;
   const roverOk  = status === 'animating' || status === 'completed';
 
+  // Track Pointer Lock state for the hint label.
+  const [isPointerLocked, setIsPointerLocked] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsPointerLocked(!!document.pointerLockElement);
+    document.addEventListener('pointerlockchange', onChange);
+    return () => document.removeEventListener('pointerlockchange', onChange);
+  }, []);
+
   return (
     <>
       {/* ── FPV NASA Visor Overlay ─────────────────────────────────────────── */}
@@ -119,8 +127,9 @@ export default function HUD() {
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
           <div style={{
             width: 20, height: 20,
-            border: '1px solid rgba(0,212,255,0.4)',
+            border: `1px solid ${isPointerLocked ? 'rgba(0,212,255,0.75)' : 'rgba(0,212,255,0.4)'}`,
             borderRadius: '50%',
+            transition: 'border-color 0.3s ease',
           }} />
           <div style={{
             position: 'absolute', top: '50%', left: -8, width: 6, height: 1,
@@ -138,6 +147,24 @@ export default function HUD() {
             position: 'absolute', left: '50%', bottom: -8, width: 1, height: 6,
             background: 'rgba(0,212,255,0.5)', transform: 'translateX(-50%)',
           }} />
+        </div>
+
+        {/* Pointer-lock hint — below crosshair */}
+        <div style={{
+          position: 'absolute',
+          top: 'calc(50% + 26px)',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          fontFamily: 'monospace',
+          fontSize: 8,
+          letterSpacing: '0.18em',
+          textTransform: 'uppercase',
+          color: isPointerLocked ? 'rgba(0,212,255,0.5)' : 'rgba(0,212,255,0.7)',
+          whiteSpace: 'nowrap',
+          transition: 'color 0.3s ease',
+          pointerEvents: 'none',
+        }}>
+          {isPointerLocked ? '[ ESC ] — Fareyi Serbest Bırak' : '[ Tıkla ] — Bakışı Kontrol Et'}
         </div>
       </div>
 
