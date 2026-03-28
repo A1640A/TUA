@@ -1,5 +1,5 @@
 'use client';
-import { Suspense } from 'react';
+import { Suspense, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, AdaptiveDpr } from '@react-three/drei';
 import * as THREE from 'three';
@@ -10,7 +10,7 @@ import { useObstacleStore } from '@/store/obstacleStore';
 import Lighting       from './environment/Lighting';
 import StarField      from './environment/StarField';
 import EarthInSky     from './environment/EarthInSky';
-import MoonTerrain    from './terrain/MoonTerrain';
+import MoonTerrain, { type MoonTerrainHandle } from './terrain/MoonTerrain';
 // CraterField removed — danger rings hidden per user request.
 import ObstacleField  from './terrain/ObstacleField';
 import Rover          from './rover/Rover';
@@ -25,6 +25,8 @@ import { useRoverAnimation, useRouteCurve } from './SceneAnimator';
 import { useTerrain }    from '@/hooks/useTerrain';
 
 function SceneContent() {
+  const terrainRef = useRef<MoonTerrainHandle>(null);
+
   const curve = useRouteCurve();
   useRoverAnimation(curve);
   useTerrain();
@@ -40,7 +42,7 @@ function SceneContent() {
       <Lighting />
       <StarField />
       <EarthInSky />
-      <MoonTerrain />
+      <MoonTerrain ref={terrainRef} />
       <ObstacleField />
       <Rover />
       <RoverTrail />
@@ -70,10 +72,14 @@ function SceneContent() {
 export default function Scene() {
   return (
     <Canvas
-      shadows
-      camera={{ position: CAMERA_INITIAL_POSITION, fov: CAMERA_FOV, near: 0.1, far: 600 }}
-      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
-      style={{ background: '#080810' }}
+      shadows={{ type: THREE.PCFSoftShadowMap }}   /* soft shadow edges on terrain */
+      camera={{ position: CAMERA_INITIAL_POSITION, fov: CAMERA_FOV, near: 0.1, far: 800 }}
+      gl={{
+        antialias: true,
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: 0.95,   /* slightly lower exposure for dramatic contrast */
+      }}
+      style={{ background: '#060608' }}
     >
       <Suspense fallback={null}>
         <SceneContent />
