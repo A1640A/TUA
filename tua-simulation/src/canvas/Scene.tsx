@@ -2,22 +2,24 @@
 import { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, AdaptiveDpr } from '@react-three/drei';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CAMERA_INITIAL_POSITION, CAMERA_FOV } from '@/lib/constants';
 import { useSimulationStore } from '@/store/simulationStore';
+import { useObstacleStore } from '@/store/obstacleStore';
 
 import Lighting       from './environment/Lighting';
 import StarField      from './environment/StarField';
 import EarthInSky     from './environment/EarthInSky';
 import MoonTerrain    from './terrain/MoonTerrain';
 import CraterField    from './terrain/CraterField';
+import ObstacleField  from './terrain/ObstacleField';
 import Rover          from './rover/Rover';
 import RoverTrail     from './rover/RoverTrail';
 import RoutePath      from './route/RoutePath';
 import Waypoints      from './route/Waypoints';
 import PostProcessing from './effects/PostProcessing';
 import DustParticles  from './effects/DustParticles';
+import ScanOverlay    from './effects/ScanOverlay';
 import { useRoverAnimation, useRouteCurve } from './SceneAnimator';
 import { useTerrain }    from '@/hooks/useTerrain';
 
@@ -25,8 +27,10 @@ function SceneContent() {
   const curve = useRouteCurve();
   useRoverAnimation(curve);
   useTerrain();
-  const placementMode = useSimulationStore(s => s.placementMode);
-  const placing = !!placementMode;
+
+  const placementMode    = useSimulationStore(s => s.placementMode);
+  const placingObstacle  = useObstacleStore(s => s.placingObstacle);
+  const placing = !!(placementMode || placingObstacle);
 
   return (
     <>
@@ -35,11 +39,13 @@ function SceneContent() {
       <EarthInSky />
       <MoonTerrain />
       <CraterField />
+      <ObstacleField />
       <Rover />
       <RoverTrail />
       <RoutePath />
       <Waypoints />
       <DustParticles />
+      <ScanOverlay />
       <OrbitControls
         makeDefault
         minDistance={8}
