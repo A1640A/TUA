@@ -1,11 +1,13 @@
 'use client';
 import { useRef, useMemo, useEffect } from 'react';
-import { useFrame, ThreeEvent, useThree } from '@react-three/fiber';
+import { useFrame, ThreeEvent, useThree, useLoader } from '@react-three/fiber';
+import { ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
 import { useObstacleStore } from '@/store/obstacleStore';
 import { useTerrainStore } from '@/store/terrainStore';
 import type { Obstacle } from '@/types/simulation.types';
 import { getWorldY } from '@/canvas/terrain/MoonTerrain';
+import { displaceMesh, makeLunarRockMaterial } from '@/canvas/terrain/rockUtils';
 
 // ─── Visual config per variant ─────────────────────────────────────────────────
 // rx = primary radius (world units), ry = height scale
@@ -40,84 +42,198 @@ function seedRotation(seed: number): [number, number, number] {
   return [s1 * Math.PI * 2, s2 * Math.PI * 2, s3 * Math.PI * 2];
 }
 
+// ─── Displaced icosahedron builder ─────────────────────────────────────────────────
+/**
+ * Creates an IcosahedronGeometry and applies deterministic Simplex vertex
+ * displacement to produce a jagged, fractured basalt silhouette.
+ * The geometry is memoised by (radius, detail, seed, intensity).
+ */
+function useRockGeo(
+  radius: number,
+  detail: number,
+  seed: number,
+  intensity: number,
+): THREE.BufferGeometry {
+  return useMemo(() => {
+    const geo = new THREE.IcosahedronGeometry(radius, detail);
+    displaceMesh(geo, seed, intensity);
+    return geo;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [radius, detail, seed, intensity]);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-//  BOULDER — SMALL  (unchanged, small angular basalt chip)
+//  BOULDER — SMALL  (IcosahedronGeometry detail=2 → 320 faces)
+//  Small sharp chip with strong angular fracture from vertex noise.
 // ─────────────────────────────────────────────────────────────────────────────
 function BoulderSm({
-  cfg, matRef, seed,
-}: { cfg: VariantConfig; matRef: (el: THREE.MeshStandardMaterial | null) => void; seed: number }) {
+  cfg, lunarTex, seed,
+}: { cfg: VariantConfig; lunarTex: THREE.Texture | null; seed: number }) {
   const rot = seedRotation(seed);
+
+  // Main body
+  const geoMain = useRockGeo(cfg.rx, 2, seed, cfg.rx * 0.38);
+
+  // Satellite chip — smaller, different noise seed
+  const geoChip1 = useRockGeo(cfg.rx * 0.52, 1, seed + 5.3, cfg.rx * 0.35);
+
+  // Tiny pebble
+  const geoChip2 = useRockGeo(cfg.rx * 0.30, 1, seed + 11.8, cfg.rx * 0.30);
+
+  const matMain  = useMemo(() => makeLunarRockMaterial(lunarTex, '#6b5c4c', seed),       [lunarTex, seed]);
+  const matChip  = useMemo(() => makeLunarRockMaterial(lunarTex, '#594d3f', seed + 5.3), [lunarTex, seed]);
+  const matPeb   = useMemo(() => makeLunarRockMaterial(lunarTex, '#7a6a58', seed + 11.8),[lunarTex, seed]);
+
   return (
     <>
-      <mesh castShadow receiveShadow rotation={rot}>
-        <dodecahedronGeometry args={[cfg.rx, 0]} />
-        <meshStandardMaterial ref={matRef} color="#6b5c4c" roughness={0.96} metalness={0.04}
-          emissive={cfg.glow} emissiveIntensity={0.0} />
-      </mesh>
-      <mesh castShadow receiveShadow
+      <mesh castShadow receiveShadow geometry={geoMain} material={matMain} rotation={rot} />
+      <mesh castShadow receiveShadow geometry={geoChip1} material={matChip}
         position={[cfg.rx * 0.55, -cfg.ry * 0.3, cfg.rx * -0.5]}
         rotation={[rot[0] + 0.9, rot[1] + 0.5, rot[2]]}
-      >
-        <dodecahedronGeometry args={[cfg.rx * 0.52, 0]} />
-        <meshStandardMaterial color="#594d3f" roughness={0.98} metalness={0.02} />
-      </mesh>
-      <mesh castShadow receiveShadow
+      />
+      <mesh castShadow receiveShadow geometry={geoChip2} material={matPeb}
         position={[-cfg.rx * 0.35, -cfg.ry * 0.15, cfg.rx * 0.55]}
         rotation={[rot[0], rot[1] - 1.2, rot[2] + 0.7]}
-      >
-        <dodecahedronGeometry args={[cfg.rx * 0.35, 0]} />
-        <meshStandardMaterial color="#7a6a58" roughness={0.97} metalness={0.03} />
-      </mesh>
+      />
     </>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BOULDER — MEDIUM  (roughly one rover wheel in height, ~1.1wu radius)
-//  Warmer ochre tones. High-segment sphere with scale deformation so it
-//  reads clearly as a solid, real rock — not too small to miss.
+//  BOULDER — MEDIUM  (IcosahedronGeometry detail=3 → 1280 faces)
+//  One rover-wheel radius in height. Anisotropic scale gives oblate "river rock"
+//  silhouette common in Apollo landing footage.
 // ─────────────────────────────────────────────────────────────────────────────
 function BoulderMd({
-  cfg, matRef, seed,
-}: { cfg: VariantConfig; matRef: (el: THREE.MeshStandardMaterial | null) => void; seed: number }) {
-  const rot  = seedRotation(seed);
+  cfg, lunarTex, seed,
+}: { cfg: VariantConfig; lunarTex: THREE.Texture | null; seed: number }) {
+  const rot   = seedRotation(seed);
   const scaleX = 0.80 + (Math.sin(seed) * 0.5 + 0.5) * 0.30;
   const scaleZ = 0.85 + (Math.cos(seed * 2.3) * 0.5 + 0.5) * 0.28;
+
+  const geoMain  = useRockGeo(cfg.rx, 3, seed,        cfg.rx * 0.30);
+  const geoShard = useRockGeo(cfg.rx * 0.52, 2, seed + 7.1,  cfg.rx * 0.32);
+  const geoSlab  = useRockGeo(cfg.rx * 0.40, 2, seed + 14.2, cfg.rx * 0.25);
+
+  const matMain  = useMemo(() => makeLunarRockMaterial(lunarTex, '#726050', seed),        [lunarTex, seed]);
+  const matShard = useMemo(() => makeLunarRockMaterial(lunarTex, '#615040', seed + 7.1),  [lunarTex, seed]);
+  const matSlab  = useMemo(() => makeLunarRockMaterial(lunarTex, '#5a4a38', seed + 14.2), [lunarTex, seed]);
+
+  // Scatter pebbles
+  const pebbles = useMemo(() =>
+    [0, 1, 2].map((j) => {
+      const angle  = (j / 3) * Math.PI * 2 + seed;
+      const radius = cfg.rx * (1.1 + j * 0.15);
+      return { pos: [Math.cos(angle) * radius, -cfg.ry * 0.42, Math.sin(angle) * radius] as [number,number,number] };
+    }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [cfg.rx, cfg.ry, seed]);
+
+  const matPeb = useMemo(() => makeLunarRockMaterial(lunarTex, '#7a6a55', seed + 22), [lunarTex, seed]);
+
   return (
     <>
-      {/* Main body — deformed sphere */}
-      <mesh castShadow receiveShadow scale={[scaleX, 1.0, scaleZ]} rotation={rot}>
-        <sphereGeometry args={[cfg.rx, 14, 10]} />
-        <meshStandardMaterial ref={matRef} color="#726050" roughness={0.94} metalness={0.06}
-          emissive={cfg.glow} emissiveIntensity={0.0} />
-      </mesh>
-      {/* Satellite boulder — major split face */}
-      <mesh castShadow receiveShadow
+      {/* Main body */}
+      <mesh castShadow receiveShadow geometry={geoMain} material={matMain}
+        scale={[scaleX, 1.0, scaleZ]} rotation={rot}
+      />
+      {/* Cleaved shard */}
+      <mesh castShadow receiveShadow geometry={geoShard} material={matShard}
         position={[cfg.rx * 0.70, -cfg.ry * 0.25, cfg.rx * -0.48]}
         rotation={[rot[0] + 0.6, rot[1] + 1.1, rot[2]]}
-      >
-        <dodecahedronGeometry args={[cfg.rx * 0.55, 0]} />
-        <meshStandardMaterial color="#615040" roughness={0.97} metalness={0.03} />
-      </mesh>
-      {/* Flat slab — bedded basalt exposure */}
-      <mesh castShadow receiveShadow
+      />
+      {/* Flat slab */}
+      <mesh castShadow receiveShadow geometry={geoSlab} material={matSlab}
         position={[-cfg.rx * 0.55, -cfg.ry * 0.38, cfg.rx * 0.38]}
         rotation={[rot[0] * 0.4, rot[1], -0.5]}
-        scale={[1.4, 0.30, 0.9]}
-      >
-        <boxGeometry args={[cfg.rx * 0.7, cfg.rx * 0.5, cfg.rx * 0.6]} />
-        <meshStandardMaterial color="#5a4a38" roughness={0.98} metalness={0.02} />
-      </mesh>
+        scale={[1.4, 0.28, 0.9]}
+      />
       {/* Scatter pebbles */}
-      {[0, 1, 2].map((j) => {
-        const angle  = (j / 3) * Math.PI * 2 + seed;
-        const radius = cfg.rx * (1.1 + j * 0.15);
+      {pebbles.map((p, i) => (
+        <mesh key={i} castShadow position={p.pos}>
+          <icosahedronGeometry args={[0.07 + i * 0.03, 1]} />
+          <primitive object={matPeb} attach="material" />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  BOULDER — LARGE  (IcosahedronGeometry detail=4 → 5120 faces)
+//  Multi-body cluster. 2× rover height. Strong Simplex displacement creates a
+//  genuinely threatening, craggy basalt monolith.
+// ─────────────────────────────────────────────────────────────────────────────
+function BoulderLg({
+  cfg, lunarTex, seed,
+}: { cfg: VariantConfig; lunarTex: THREE.Texture | null; seed: number }) {
+  const rot  = seedRotation(seed);
+  const rot2 = seedRotation(seed + 13.7);
+  const rot3 = seedRotation(seed + 27.4);
+  const scx  = 0.80 + (Math.sin(seed * 3.1) * 0.5 + 0.5) * 0.30;
+  const scz  = 0.85 + (Math.cos(seed * 1.7) * 0.5 + 0.5) * 0.25;
+
+  // High-poly central mass — most prominent silhouette
+  const geoMain  = useRockGeo(cfg.rx,        4, seed,        cfg.rx * 0.28);
+  // Large flank shard — detail=3 sufficient for secondary body
+  const geoRight = useRockGeo(cfg.rx * 0.62, 3, seed + 13.7, cfg.rx * 0.30);
+  const geoLeft  = useRockGeo(cfg.rx * 0.52, 3, seed + 27.4, cfg.rx * 0.28);
+  // Partially buried rear mass
+  const geoRear  = useRockGeo(cfg.rx * 0.44, 3, seed + 41.1, cfg.rx * 0.25);
+
+  const matMain  = useMemo(() => makeLunarRockMaterial(lunarTex, '#5e4e3e', seed),        [lunarTex, seed]);
+  const matRight = useMemo(() => makeLunarRockMaterial(lunarTex, '#4e3e2e', seed + 13.7), [lunarTex, seed]);
+  const matLeft  = useMemo(() => makeLunarRockMaterial(lunarTex, '#685848', seed + 27.4), [lunarTex, seed]);
+  const matRear  = useMemo(() => makeLunarRockMaterial(lunarTex, '#584838', seed + 41.1), [lunarTex, seed]);
+
+  // Wide pebble scatter field around the formation
+  const pebbles = useMemo(() =>
+    Array.from({ length: 14 }, (_, j) => {
+      const angle = (j / 14) * Math.PI * 1.9 + seed * 0.8;
+      const r     = cfg.rx * (1.35 + Math.sin(j * 2.3) * 0.30);
+      const size  = 0.055 + Math.abs(Math.cos(j * 1.7 + seed)) * 0.085;
+      return {
+        pos:  [Math.cos(angle) * r, -cfg.ry * 0.48, Math.sin(angle) * r] as [number,number,number],
+        size,
+        seed: seed + j * 3.7,
+      };
+    }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [cfg.rx, cfg.ry, seed]);
+
+  const matPeb = useMemo(() => makeLunarRockMaterial(lunarTex, '#7e6e5a', seed + 58), [lunarTex, seed]);
+
+  return (
+    <>
+      {/* Dominant central mass */}
+      <mesh castShadow receiveShadow geometry={geoMain} material={matMain}
+        scale={[scx, 1.0, scz]} rotation={rot}
+      />
+      {/* Right shard */}
+      <mesh castShadow receiveShadow geometry={geoRight} material={matRight}
+        position={[cfg.rx * 0.70, -cfg.ry * 0.08, cfg.rx * -0.55]}
+        rotation={[rot2[0], rot2[1], rot2[2]]}
+        scale={[0.75, 0.85, 0.90]}
+      />
+      {/* Left counter-shard */}
+      <mesh castShadow receiveShadow geometry={geoLeft} material={matLeft}
+        position={[-cfg.rx * 0.62, -cfg.ry * 0.18, cfg.rx * 0.48]}
+        rotation={[rot[0] + 0.8, rot[1] - 0.5, rot[2] + 0.3]}
+        scale={[0.85, 0.78, 1.0]}
+      />
+      {/* Rear — partially buried */}
+      <mesh castShadow receiveShadow geometry={geoRear} material={matRear}
+        position={[cfg.rx * 0.15, -cfg.ry * 0.42, cfg.rx * 0.62]}
+        rotation={[rot3[0], rot3[1], rot3[2]]}
+        scale={[0.90, 0.60, 0.80]}
+      />
+      {/* Pebble scatter arc */}
+      {pebbles.map((p, i) => {
+        const geo = new THREE.IcosahedronGeometry(Math.max(0.04, p.size), 1);
         return (
-          <mesh key={j} castShadow
-            position={[Math.cos(angle) * radius, -cfg.ry * 0.42, Math.sin(angle) * radius]}
-          >
-            <dodecahedronGeometry args={[0.08 + j * 0.04, 0]} />
-            <meshStandardMaterial color="#7a6a55" roughness={0.99} metalness={0.01} />
+          <mesh key={i} castShadow position={p.pos}>
+            <primitive object={geo} attach="geometry" />
+            <primitive object={matPeb} attach="material" />
           </mesh>
         );
       })}
@@ -126,99 +242,57 @@ function BoulderMd({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BOULDER — LARGE  (rx=3.2wu → twice the rover height ≈ 2.5wu)
-//  Multi-body cluster. High-subdivision sphere + perlin-style vertex noise
-//  approximated via anisotropic non-uniform scale. Dark iron-rich basalt.
-// ─────────────────────────────────────────────────────────────────────────────
-function BoulderLg({
-  cfg, matRef, seed,
-}: { cfg: VariantConfig; matRef: (el: THREE.MeshStandardMaterial | null) => void; seed: number }) {
-  const rot  = seedRotation(seed);
-  const rot2 = seedRotation(seed + 13.7);
-  const rot3 = seedRotation(seed + 27.4);
-  const scx  = 0.80 + (Math.sin(seed * 3.1) * 0.5 + 0.5) * 0.30;
-  const scz  = 0.85 + (Math.cos(seed * 1.7) * 0.5 + 0.5) * 0.25;
-
-  // Scatter pebble field — wide arc around the massive formation
-  const pebbles = useMemo(() => {
-    return Array.from({ length: 12 }, (_, j) => {
-      const angle  = (j / 12) * Math.PI * 1.9 + seed * 0.8;
-      const r      = cfg.rx * (1.35 + Math.sin(j * 2.3) * 0.30);
-      const size   = 0.06 + Math.abs(Math.cos(j * 1.7 + seed)) * 0.08;
-      return { pos: [Math.cos(angle) * r, -cfg.ry * 0.48, Math.sin(angle) * r] as [number,number,number], size };
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg.rx, cfg.ry, seed]);
-
-  return (
-    <>
-      {/* Dominant central mass — high-segment sphere with extreme scale deformation */}
-      <mesh castShadow receiveShadow scale={[scx, 1.0, scz]} rotation={rot}>
-        <sphereGeometry args={[cfg.rx, 20, 14]} />
-        <meshStandardMaterial ref={matRef} color="#5e4e3e" roughness={0.92} metalness={0.07}
-          emissive={cfg.glow} emissiveIntensity={0.0} />
-      </mesh>
-      {/* Right shard — major cleaved face */}
-      <mesh castShadow receiveShadow
-        position={[cfg.rx * 0.70, -cfg.ry * 0.08, cfg.rx * -0.55]}
-        rotation={[rot2[0], rot2[1], rot2[2]]}
-        scale={[0.75, 0.85, 0.90]}
-      >
-        <dodecahedronGeometry args={[cfg.rx * 0.65, 1]} />
-        <meshStandardMaterial color="#4e3e2e" roughness={0.96} metalness={0.05} />
-      </mesh>
-      {/* Left counter-shard */}
-      <mesh castShadow receiveShadow
-        position={[-cfg.rx * 0.62, -cfg.ry * 0.18, cfg.rx * 0.48]}
-        rotation={[rot[0] + 0.8, rot[1] - 0.5, rot[2] + 0.3]}
-        scale={[0.85, 0.78, 1.0]}
-      >
-        <dodecahedronGeometry args={[cfg.rx * 0.55, 1]} />
-        <meshStandardMaterial color="#685848" roughness={0.95} metalness={0.05} />
-      </mesh>
-      {/* Rear mass — partially buried */}
-      <mesh castShadow receiveShadow
-        position={[cfg.rx * 0.15, -cfg.ry * 0.35, cfg.rx * 0.62]}
-        rotation={[rot3[0], rot3[1], rot3[2]]}
-        scale={[0.90, 0.65, 0.80]}
-      >
-        <sphereGeometry args={[cfg.rx * 0.48, 12, 9]} />
-        <meshStandardMaterial color="#584838" roughness={0.97} metalness={0.04} />
-      </mesh>
-      {/* Flat bedrock slab protruding from base */}
-      <mesh castShadow receiveShadow
-        position={[0, -cfg.ry * 0.45, cfg.rx * 0.22]}
-        rotation={[-0.14, rot[1] * 0.25, 0.10]}
-        scale={[1.7, 0.22, 1.3]}
-      >
-        <boxGeometry args={[cfg.rx * 0.90, cfg.rx * 0.40, cfg.rx * 0.75]} />
-        <meshStandardMaterial color="#3e3022" roughness={0.99} metalness={0.02} />
-      </mesh>
-      {/* Pebble impact scatter */}
-      {pebbles.map((p, i) => (
-        <mesh key={i} castShadow position={p.pos}>
-          <dodecahedronGeometry args={[Math.max(0.04, p.size), 0]} />
-          <meshStandardMaterial color="#7e6e5a" roughness={0.99} metalness={0.01} />
-        </mesh>
-      ))}
-    </>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 //  CRATER — OBSTACLE  (rx=8.0wu → massive, diameter = 10-15 grid cells)
-//  Deep bowl with raised ejecta rim and high-albedo blanket.
-//  Morphology follows Pike (1977): depth/diameter ≈ 0.196, rim/dia ≈ 0.036.
-//  The terrain deformation carves the REAL geometry — this mesh adds the
-//  visual detail layer on top: rim torus + floor marker + ejecta chips.
+//
+//  The TERRAIN DEFORMATION is already handled by terrainStore.carveCrater()
+//  which carves a real parabolic bowl into the heightMap, causing the rover
+//  raycasting to tilt over the actual geometry.
+//
+//  This component renders the VISUAL DETAIL layer on top of the deformed terrain:
+//    • Beveled inner bowl walls (CylinderGeometry + PBR normal map)
+//    • Dark basalt floor disc
+//    • Prominent ejecta rim torus with rock normal map
+//    • High-albedo ejecta blanket ring
+//    • Angular ejecta chips
 // ─────────────────────────────────────────────────────────────────────────────
 function CraterObstacle({
-  cfg, matRef,
-}: { cfg: VariantConfig; matRef: (el: THREE.MeshStandardMaterial | null) => void }) {
+  cfg, lunarTex, matRef,
+}: { cfg: VariantConfig; lunarTex: THREE.Texture | null; matRef: (el: THREE.MeshStandardMaterial | null) => void }) {
   const D     = cfg.rx * 2;         // diameter
   const rimH  = D * 0.036;          // Pike(1977) rim height
   const floorY = -D * 0.120;        // bowl floor depression
 
+  // PBR material for rim and wall — reuses the rock material factory
+  const rimMat  = useMemo(() => {
+    const m = makeLunarRockMaterial(lunarTex, '#7c6a52', 99.9);
+    return m;
+  }, [lunarTex]);
+
+  // Dark floor material — basalt melt sheet
+  const floorMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color:     new THREE.Color('#0e0c09'),
+    roughness: 1.0,
+    metalness: 0.0,
+  }), []);
+
+  // Bowl wall material — slightly lighter than floor
+  const wallMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color:     new THREE.Color('#1e1610'),
+    roughness: 0.98,
+    metalness: 0.0,
+    side:      THREE.BackSide,  // render inside of cylinder
+  }), []);
+
+  // Ejecta blanket
+  const ejectaMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color:       new THREE.Color('#c2b49a'),
+    roughness:   0.97,
+    metalness:   0.0,
+    opacity:     0.70,
+    transparent: true,
+  }), []);
+
+  // Ejecta chips
   const ejectaChips = useMemo(() => {
     const chips: { pos: [number,number,number]; size: number; rot: [number,number,number] }[] = [];
     for (let i = 0; i < 18; i++) {
@@ -236,34 +310,40 @@ function CraterObstacle({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg.rx, rimH]);
 
+  const chipMat = useMemo(() => makeLunarRockMaterial(lunarTex, '#9a8870', 44.5), [lunarTex]);
+
+  // Expose rim mat for hazard animation
+  useEffect(() => {
+    matRef(rimMat);
+  }, [rimMat, matRef]);
+
   return (
     <>
       {/* Dark basalt floor */}
       <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, floorY + 0.02, 0]}>
         <circleGeometry args={[cfg.rx * 0.70, 56]} />
-        <meshStandardMaterial color="#0e0c09" roughness={1.0} metalness={0.0} />
+        <primitive object={floorMat} attach="material" />
       </mesh>
-      {/* Inner bowl wall — dark gradient slope */}
-      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, floorY * 0.42 + 0.01, 0]}>
-        <ringGeometry args={[cfg.rx * 0.70, cfg.rx * 1.02, 56]} />
-        <meshStandardMaterial color="#1e1610" roughness={0.99} metalness={0.0} />
+      {/* Bowl wall — open cylinder viewed from inside */}
+      <mesh receiveShadow position={[0, (floorY + rimH) * 0.5, 0]}>
+        <cylinderGeometry args={[cfg.rx * 1.0, cfg.rx * 0.68, Math.abs(floorY) + rimH, 48, 4, true]} />
+        <primitive object={wallMat} attach="material" />
       </mesh>
-      {/* Raised ejecta rim — prominent torus */}
+      {/* Raised ejecta rim — torus with PBR rock material */}
       <mesh castShadow receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, rimH * 1.2, 0]}>
-        <torusGeometry args={[cfg.rx * 0.98, rimH * 2.2, 10, 64]} />
-        <meshStandardMaterial ref={matRef} color="#7c6a52" roughness={0.91} metalness={0.06}
-          emissive={cfg.glow} emissiveIntensity={0.0} />
+        <torusGeometry args={[cfg.rx * 0.98, rimH * 2.2, 12, 64]} />
+        <primitive object={rimMat} attach="material" />
       </mesh>
-      {/* High-albedo ejecta blanket — bright ring outside rim */}
+      {/* High-albedo ejecta blanket */}
       <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, rimH * 0.25, 0]}>
         <ringGeometry args={[cfg.rx * 1.06, cfg.rx * 1.38, 56]} />
-        <meshStandardMaterial color="#c2b49a" roughness={0.97} metalness={0.0} opacity={0.70} transparent />
+        <primitive object={ejectaMat} attach="material" />
       </mesh>
-      {/* Ejecta rock chips — sized for the large scale */}
+      {/* Ejecta rock chips */}
       {ejectaChips.map((chip, i) => (
         <mesh key={i} castShadow position={chip.pos} rotation={chip.rot as [number,number,number]}>
-          <dodecahedronGeometry args={[chip.size, 0]} />
-          <meshStandardMaterial color="#9a8870" roughness={0.97} metalness={0.03} />
+          <icosahedronGeometry args={[chip.size, 1]} />
+          <primitive object={chipMat} attach="material" />
         </mesh>
       ))}
     </>
@@ -272,14 +352,39 @@ function CraterObstacle({
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  DUST MOUND  (rx=5wu → 8 grid cells diameter, ry=2.2wu → 2× chassis height)
-//  Smooth regolith hill. Real elevation is handled by terrainStore.deformTerrain.
-//  This mesh renders the visual surface: hemisphere + layered bump texture.
+//  The TERRAIN DEFORMATION is handled by terrainStore.raiseDustHill() (Gaussian
+//  cosine bell). This component renders the visual surface: a hemisphere with
+//  PBR regolith material + surface texture bumps.
 // ─────────────────────────────────────────────────────────────────────────────
 function DustMound({
-  cfg, matRef, seed,
-}: { cfg: VariantConfig; matRef: (el: THREE.MeshStandardMaterial | null) => void; seed: number }) {
+  cfg, lunarTex, matRef, seed,
+}: { cfg: VariantConfig; lunarTex: THREE.Texture | null; matRef: (el: THREE.MeshStandardMaterial | null) => void; seed: number }) {
   const scaleX = 1.0 + Math.sin(seed * 4.1) * 0.14;
   const scaleZ = 1.0 + Math.cos(seed * 2.9) * 0.12;
+
+  // Mound material — warm sandy regolith
+  const moundMat = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({
+      color:    new THREE.Color('#c8a070'),
+      roughness: 1.0,
+      metalness: 0.0,
+    });
+    matRef(m);
+    return m;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Rock albedo tiled on the mound surface
+  const dustTex = useMemo(() => {
+    if (!lunarTex) return null;
+    const t = lunarTex.clone();
+    t.needsUpdate = true;
+    t.repeat.set(2, 2);
+    if (moundMat) moundMat.map = t;
+    return t;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lunarTex]);
+  void dustTex; // suppress unused-var lint
 
   const bumps = useMemo(() => {
     const b: { pos: [number,number,number]; r: number }[] = [];
@@ -294,24 +399,37 @@ function DustMound({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg.rx, cfg.ry, seed]);
 
+  const bumpMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color:    new THREE.Color('#b89060'),
+    roughness: 1.0,
+    metalness: 0.0,
+  }), []);
+
+  const baseMat = useMemo(() => new THREE.MeshStandardMaterial({
+    color:       new THREE.Color('#b08050'),
+    roughness:   1.0,
+    metalness:   0.0,
+    opacity:     0.85,
+    transparent: true,
+  }), []);
+
   return (
     <>
       {/* Main hemisphere */}
       <mesh castShadow receiveShadow scale={[scaleX, 1.0, scaleZ]}>
-        <sphereGeometry args={[cfg.rx, 28, 18, 0, Math.PI * 2, 0, Math.PI * 0.50]} />
-        <meshStandardMaterial ref={matRef} color="#c8a070" roughness={1.0} metalness={0.0}
-          emissive={cfg.glow} emissiveIntensity={0.0} />
+        <sphereGeometry args={[cfg.rx, 32, 20, 0, Math.PI * 2, 0, Math.PI * 0.50]} />
+        <primitive object={moundMat} attach="material" />
       </mesh>
       {/* Wide spread base disc */}
       <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} scale={[scaleX, scaleZ, 1]}>
         <circleGeometry args={[cfg.rx * 1.25, 48]} />
-        <meshStandardMaterial color="#b08050" roughness={1.0} metalness={0.0} opacity={0.85} transparent />
+        <primitive object={baseMat} attach="material" />
       </mesh>
       {/* Surface texture bumps */}
       {bumps.map((b, i) => (
         <mesh key={i} castShadow position={b.pos}>
-          <sphereGeometry args={[b.r, 8, 6]} />
-          <meshStandardMaterial color="#b89060" roughness={1.0} metalness={0.0} />
+          <icosahedronGeometry args={[b.r, 1]} />
+          <primitive object={bumpMat} attach="material" />
         </mesh>
       ))}
     </>
@@ -385,17 +503,17 @@ function AntennaDebris({
         <cylinderGeometry args={[0.030, 0.030, 1.20, 7]} />
         <meshStandardMaterial color="#a0aab8" metalness={0.90} roughness={0.14} />
       </mesh>
-      {/* Solar panel wing A */}
+      {/* Solar panel wing A — scratched, matte metallic */}
       <mesh castShadow receiveShadow position={[-cfg.rx * 0.72, 0.04, -0.18]} rotation={[-0.14, 0.28, 0.10]}>
         <boxGeometry args={[cfg.rx * 1.05, 0.028, 0.55]} />
-        <meshStandardMaterial color="#1a2a5c" metalness={0.70} roughness={0.25}
-          emissive="#1a3aaa" emissiveIntensity={0.14} />
+        <meshStandardMaterial color="#1a2a5c" metalness={0.70} roughness={0.35}
+          emissive="#1a3aaa" emissiveIntensity={0.10} />
       </mesh>
       {/* Solar panel wing B */}
       <mesh castShadow receiveShadow position={[cfg.rx * 0.62, 0.08, 0.40]} rotation={[-0.42, -0.32, 0.38]}>
         <boxGeometry args={[cfg.rx * 0.90, 0.028, 0.50]} />
-        <meshStandardMaterial color="#192558" metalness={0.70} roughness={0.28}
-          emissive="#152ab0" emissiveIntensity={0.12} />
+        <meshStandardMaterial color="#192558" metalness={0.70} roughness={0.38}
+          emissive="#152ab0" emissiveIntensity={0.08} />
       </mesh>
       {/* Debris scatter — bolts and shards */}
       {[0, 1, 2, 3, 4, 5, 6].map((j) => {
@@ -418,8 +536,6 @@ function AntennaDebris({
 // ─────────────────────────────────────────────────────────────────────────────
 //  FOOTPRINT PREVIEW DISC
 //  Rendered under the cursor while placingObstacle=true.
-//  Shows the exact clearance footprint of the selected obstacle variant
-//  so the user can see the blocked area before dropping.
 // ─────────────────────────────────────────────────────────────────────────────
 function FootprintPreview({ variant }: { variant: Obstacle['variant'] }) {
   const cfg       = CONFIGS[variant];
@@ -428,7 +544,6 @@ function FootprintPreview({ variant }: { variant: Obstacle['variant'] }) {
   const groupRef  = useRef<THREE.Group>(null);
   const matRef    = useRef<THREE.MeshStandardMaterial>(null);
 
-  // Internal raycaster — updates in useFrame from mouse position
   const raycasterRef = useRef(new THREE.Raycaster());
   const planeRef     = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
 
@@ -441,14 +556,11 @@ function FootprintPreview({ variant }: { variant: Obstacle['variant'] }) {
       const mouse = new THREE.Vector2(mx, my);
       raycasterRef.current.setFromCamera(mouse, camera);
 
-      // Intersect against a horizontal plane at the approximate terrain height
-      // (The exact Y will be corrected by sampling the heightmap below)
       const hit = new THREE.Vector3();
       raycasterRef.current.ray.intersectPlane(planeRef.current, hit);
 
       if (hit && groupRef.current && terrain?.heightMap) {
         const wx = hit.x, wz = hit.z;
-        // Sample exact terrain height at the cursor world position
         const wy = getWorldY(terrain.heightMap, wx, wz);
         groupRef.current.position.set(wx, wy + 0.05, wz);
       }
@@ -507,6 +619,17 @@ export default function ObstacleField() {
   const placingObst    = useObstacleStore(s => s.placingObstacle);
   const selectedVar    = useObstacleStore(s => s.selectedVariant);
 
+  // Load the shared lunar albedo texture — same one MoonTerrain uses.
+  // Each boulder will clone + offset it so every rock looks unique.
+  const lunarTex = useLoader(THREE.TextureLoader, '/lunar-displacement.jpg');
+  useMemo(() => {
+    if (!lunarTex) return;
+    lunarTex.wrapS = lunarTex.wrapT = THREE.RepeatWrapping;
+    lunarTex.anisotropy = 16;
+    lunarTex.minFilter  = THREE.LinearMipmapLinearFilter;
+    lunarTex.magFilter  = THREE.LinearFilter;
+  }, [lunarTex]);
+
   // Two ref arrays: pulse materials (general glow) and LED (fast blink)
   const matsRef = useRef<(THREE.MeshStandardMaterial | null)[]>([]);
   const ledsRef = useRef<(THREE.MeshStandardMaterial | null)[]>([]);
@@ -529,6 +652,23 @@ export default function ObstacleField() {
 
   return (
     <>
+      {/* ── Shared contact shadow — renders once, covers all obstacles ── */}
+      {/*
+        ContactShadows uses a shadow-camera blit at y=0.
+        opacity=0.65 and blur=3.5 produce soft, physically plausible
+        ambient-occlusion contact shadows that prevent the "floating object"
+        look. This single instance covers the entire scene.
+      */}
+      <ContactShadows
+        position={[0, 0.01, 0]}
+        opacity={0.65}
+        scale={90}
+        blur={3.5}
+        far={12}
+        resolution={512}
+        color="#000000"
+      />
+
       {/* Footprint preview disc — shown while in placement mode */}
       {placingObst && <FootprintPreview variant={selectedVar} />}
 
@@ -537,9 +677,6 @@ export default function ObstacleField() {
         const isCrater  = obs.variant === 'crater';
         const isAntenna = obs.variant === 'antenna';
         const isDust    = obs.variant === 'dust-mound';
-        // Y positioning: craters and dust mounds sit at terrain level (their
-        // height is baked into the terrain geometry by deformTerrain).
-        // Boulders/antenna sit their visual radius above the terrain surface.
         const meshR = (isCrater || isDust) ? 0 : isAntenna ? 0.08 : cfg.rx;
         const yPos  = obs.worldPos[1] + meshR;
         const seed  = obs.worldPos[0] * 13.7 + obs.worldPos[2] * 7.3;
@@ -555,19 +692,19 @@ export default function ObstacleField() {
           >
             {/* ── Type-specific 3D mesh ── */}
             {obs.variant === 'boulder-sm' && (
-              <BoulderSm cfg={cfg} matRef={el => { matsRef.current[i] = el; }} seed={seed} />
+              <BoulderSm cfg={cfg} lunarTex={lunarTex ?? null} seed={seed} />
             )}
             {obs.variant === 'boulder-md' && (
-              <BoulderMd cfg={cfg} matRef={el => { matsRef.current[i] = el; }} seed={seed} />
+              <BoulderMd cfg={cfg} lunarTex={lunarTex ?? null} seed={seed} />
             )}
             {obs.variant === 'boulder-lg' && (
-              <BoulderLg cfg={cfg} matRef={el => { matsRef.current[i] = el; }} seed={seed} />
+              <BoulderLg cfg={cfg} lunarTex={lunarTex ?? null} seed={seed} />
             )}
             {obs.variant === 'crater' && (
-              <CraterObstacle cfg={cfg} matRef={el => { matsRef.current[i] = el; }} />
+              <CraterObstacle cfg={cfg} lunarTex={lunarTex ?? null} matRef={el => { matsRef.current[i] = el; }} />
             )}
             {obs.variant === 'dust-mound' && (
-              <DustMound cfg={cfg} matRef={el => { matsRef.current[i] = el; }} seed={seed} />
+              <DustMound cfg={cfg} lunarTex={lunarTex ?? null} matRef={el => { matsRef.current[i] = el; }} seed={seed} />
             )}
             {obs.variant === 'antenna' && (
               <AntennaDebris
