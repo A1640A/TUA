@@ -71,3 +71,4 @@ C:\Users\domer\OneDrive\Desktop\TUA\tua-api\obj\Debug\net9.0\refint\tua-api.dll
 C:\Users\domer\OneDrive\Desktop\TUA\tua-api\obj\Debug\net9.0\tua-api.pdb
 C:\Users\domer\OneDrive\Desktop\TUA\tua-api\obj\Debug\net9.0\tua-api.genruntimeconfig.cache
 C:\Users\domer\OneDrive\Desktop\TUA\tua-api\obj\Debug\net9.0\ref\tua-api.dll
+C:\Users\domer\OneDrive\Desktop\TUA\tua-api\bin\Debug\net9.0\railway.json

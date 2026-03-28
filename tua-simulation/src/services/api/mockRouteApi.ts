@@ -1,4 +1,4 @@
-﻿import type { RouteRequest, RouteResponse, RoutePoint } from '../types/routeContract';
+import type { RouteRequest, RouteResponse, RoutePoint } from '../types/routeContract';
 import { euclideanDistance } from '@/lib/mathUtils';
 
 /**
@@ -48,10 +48,12 @@ export async function mockCalculateRoute(req: RouteRequest): Promise<RouteRespon
   await new Promise(r => setTimeout(r, 300 + Math.random() * 200));
 
   return {
-    success:   true,
+    success:       true,
     path,
     totalCost,
-    stepCount: path.length,
-    elapsedMs: Math.round(performance.now() - t0),
+    stepCount:     path.length,
+    elapsedMs:     Math.round(performance.now() - t0),
+    visitedNodes:  [],
+    isUnreachable: false,
   };
 }
