@@ -20,6 +20,12 @@ export interface RouteRequest {
    * sequence of grid-cell IDs expanded by A*, enabling the scan-animation overlay.
    */
   returnVisited:  boolean;
+  /**
+   * Rover clearance half-side in grid cells for True Clearance A* (C-Space expansion).
+   * Must mirror the ROVER_CLEARANCE_RADIUS constant and AStarAlgorithm.RoverClearanceRadius.
+   * 0 = point-mass (no clearance), 1 = 3×3 kernel (default), 2 = 5×5, 3 = 7×7.
+   */
+  roverFootprint: number;
 }
 
 export interface CostWeights {

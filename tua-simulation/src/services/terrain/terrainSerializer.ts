@@ -1,6 +1,7 @@
 import type { TerrainData } from '@/types/terrain.types';
 import type { CostWeights, RouteRequest } from '../types/routeContract';
 import type { GridNode, Obstacle } from '@/types/simulation.types';
+import { ROVER_FOOTPRINT } from '@/lib/constants';
 
 /**
  * Serialises internal TerrainData + runtime state into the JSON payload
@@ -63,5 +64,6 @@ export function buildRouteRequest(
     costWeights,
     addedObstacles: uniqueObstacles,
     returnVisited,
+    roverFootprint: ROVER_FOOTPRINT,  // mirrors C# AStarAlgorithm.RoverClearanceRadius
   };
 }

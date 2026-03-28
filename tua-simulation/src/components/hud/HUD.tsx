@@ -45,9 +45,12 @@ export default function HUD() {
   const status     = useSimulationStore(s => s.status);
   const obstacles  = useObstacleStore(s => s.obstacles);
   const cameraMode = useSimulationStore(s => s.cameraMode);
-  const setCameraMode = useSimulationStore(s => s.setCameraMode);
+  const setCameraMode        = useSimulationStore(s => s.setCameraMode);
+  const showClearanceBounds  = useSimulationStore(s => s.showClearanceBounds);
+  const toggleClearanceBounds = useSimulationStore(s => s.toggleClearanceBounds);
 
   const isFpv    = cameraMode === 'fpv';
+  const isBounds = showClearanceBounds;
   const apiOk    = status !== 'error';
   const terrainOk = true;
   const roverOk  = status === 'animating' || status === 'completed';
@@ -226,11 +229,12 @@ export default function HUD() {
         </div>
       </div>
 
-      {/* ── Camera Mode Toggle — Bottom Center ───────────────────────────── */}
+      {/* ── Bottom-Center HUD buttons (camera + clearance bounds) ─────────── */}
       <div
         className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-auto"
-        style={{ zIndex: 20 }}
+        style={{ zIndex: 20, display: 'flex', gap: 10, alignItems: 'center' }}
       >
+        {/* Camera Mode Toggle */}
         <button
           id="camera-mode-toggle"
           onClick={() => setCameraMode(isFpv ? 'orbit' : 'fpv')}
@@ -252,7 +256,6 @@ export default function HUD() {
             backdropFilter: 'blur(8px)',
           }}
         >
-          {/* Camera icon  */}
           <svg
             width="13" height="10" viewBox="0 0 13 10" fill="none"
             style={{ opacity: isFpv ? 1 : 0.55, transition: 'opacity 0.3s ease' }}
@@ -262,28 +265,71 @@ export default function HUD() {
             <circle cx="5" cy="6" r="1.5" fill="#00d4ff" opacity="0.7" />
           </svg>
           <span style={{
-            fontFamily: 'monospace',
-            fontSize: 9,
-            letterSpacing: '0.2em',
+            fontFamily: 'monospace', fontSize: 9, letterSpacing: '0.2em',
             textTransform: 'uppercase',
             color: isFpv ? 'rgba(0,212,255,1)' : 'rgba(0,212,255,0.6)',
-            fontWeight: 600,
-            transition: 'color 0.3s ease',
-            whiteSpace: 'nowrap',
+            fontWeight: 600, transition: 'color 0.3s ease', whiteSpace: 'nowrap',
           }}>
             {isFpv ? 'KAMERA: ARAÇ İÇİ' : 'KAMERA: YÖRÜNGE'}
           </span>
-          {/* Active indicator dot */}
           {isFpv && (
             <span style={{
               width: 5, height: 5, borderRadius: '50%',
-              background: '#00d4ff',
-              boxShadow: '0 0 6px #00d4ff',
-              flexShrink: 0,
+              background: '#00d4ff', boxShadow: '0 0 6px #00d4ff', flexShrink: 0,
+            }} />
+          )}
+        </button>
+
+        {/* ── C-Space / Clearance Bounds Visualizer Toggle ─────────────────── */}
+        <button
+          id="clearance-bounds-toggle"
+          title="C-Uzayı Sınır Görselleştirici — True Clearance A*"
+          onClick={toggleClearanceBounds}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '7px 18px',
+            borderRadius: 6,
+            border: isBounds
+              ? '1px solid rgba(0,255,200,0.8)'
+              : '1px solid rgba(0,255,200,0.22)',
+            background: isBounds
+              ? 'rgba(0,255,200,0.12)'
+              : 'rgba(0,255,200,0.04)',
+            boxShadow: isBounds
+              ? '0 0 22px rgba(0,255,200,0.35), inset 0 0 14px rgba(0,255,200,0.07)'
+              : '0 0 8px rgba(0,255,200,0.06)',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          {/* Bounding-box wireframe icon */}
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+            style={{ opacity: isBounds ? 1 : 0.5, transition: 'opacity 0.3s ease' }}
+          >
+            <rect x="1" y="1" width="10" height="10" rx="1"
+              stroke="#00ffc8" strokeWidth="1" strokeDasharray="2 1.5" />
+            <circle cx="6" cy="6" r="1.5" fill="#00ffc8" opacity="0.7" />
+            <line x1="1" y1="1" x2="11" y2="11" stroke="#00ffc8" strokeWidth="0.5" opacity="0.4" />
+            <line x1="11" y1="1" x2="1" y2="11" stroke="#00ffc8" strokeWidth="0.5" opacity="0.4" />
+          </svg>
+          <span style={{
+            fontFamily: 'monospace', fontSize: 9, letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            color: isBounds ? 'rgba(0,255,200,1)' : 'rgba(0,255,200,0.55)',
+            fontWeight: 600, transition: 'color 0.3s ease', whiteSpace: 'nowrap',
+          }}>
+            {isBounds ? 'C-UZAYI: CANLI' : 'C-UZAYI: GİZLİ'}
+          </span>
+          {isBounds && (
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: '#00ffc8', boxShadow: '0 0 8px #00ffc8', flexShrink: 0,
             }} />
           )}
         </button>
       </div>
+
 
       {/* ── Scan status overlay banner ────────────────────────────────────── */}
       {status === 'scanning' && (

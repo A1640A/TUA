@@ -34,6 +34,14 @@ interface SimulationStore {
   /** Unix timestamp (ms) when the first route was calculated. Null until then. */
   missionStartMs: number | null;
 
+  // ── Clearance bounds visualizer ─────────────────────────────────────────────
+  /**
+   * When true, renders a holographic wireframe box around the rover that
+   * visualises the exact C-Space clearance radius used by the A* backend.
+   * Intended for competition judges / debugging.
+   */
+  showClearanceBounds: boolean;
+
   // ── Actions ─────────────────────────────────────────────────────────────────
   setStatus:        (s: SimulationStatus) => void;
   setWaypoint:      (type: 'start' | 'end', grid: GridNode) => void;
@@ -46,6 +54,7 @@ interface SimulationStore {
   setVisitedNodes:  (nodes: number[]) => void;
   setScanProgress:  (idx: number) => void;
   startMissionClock: () => void;
+  toggleClearanceBounds: () => void;
   reset:            () => void;
 }
 
@@ -75,6 +84,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
     elevationWeight:  DEFAULT_ELEVATION_WEIGHT,
   },
   error: null,
+  showClearanceBounds: false,
 
   setStatus:        (status)      => set({ status }),
   setWaypoint:      (type, grid)  => set((s) => {
@@ -92,6 +102,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   startMissionClock: ()             => set((s) => ({
     missionStartMs: s.missionStartMs ?? Date.now(),
   })),
+  toggleClearanceBounds: ()         => set((s) => ({ showClearanceBounds: !s.showClearanceBounds })),
   reset: () => set({
     status: 'idle', routeResult: null,
     roverState: defaultRover, error: null, placementMode: null,

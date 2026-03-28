@@ -9,6 +9,20 @@ export const CRATER_RISK_RADIUS    = 4;    // Grid cells
 export const ROVER_SPEED           = 0.032;
 export const ROVER_MASS_KG         = 900;
 export const ROVER_MAX_SLOPE_DEG   = 25;
+/**
+ * Rover clearance half-side in grid cells — mirrors AStarAlgorithm.RoverClearanceRadius
+ * in the C# backend. Controls both the True Clearance A* kernel size AND the
+ * holographic bounding-box visualizer rendered around the 3-D rover model.
+ *
+ * At GridSize=128 / TerrainScale=80:  1 cell ≈ 0.625 m world-space.
+ * radius=1  →  3×3 kernel  =  ~1.875 m each side of rover centre.
+ */
+export const ROVER_CLEARANCE_RADIUS = 1;  // grid cells (must match C# default)
+/**
+ * Full integer value sent as `roverFootprint` in the A* route request.
+ * Equals ROVER_CLEARANCE_RADIUS — kept separate for clarity at the call-site.
+ */
+export const ROVER_FOOTPRINT        = ROVER_CLEARANCE_RADIUS;
 
 //  A* Default Cost Weights
 export const DEFAULT_SLOPE_WEIGHT         = 2.5;

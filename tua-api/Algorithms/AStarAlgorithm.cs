@@ -4,7 +4,7 @@ using TuaApi.Models.Response;
 namespace TuaApi.Algorithms;
 
 /// <summary>
-/// Optimised 8-directional A* pathfinder for lunar surface navigation.
+/// True Clearance A* (C-Space expansion) pathfinder for lunar surface navigation.
 /// </summary>
 /// <remarks>
 /// <b>Cost function (per edge):</b>
@@ -14,6 +14,19 @@ namespace TuaApi.Algorithms;
 /// <b>Heuristic:</b> Euclidean distance with tie-breaking multiplier (1 + ε) to minimise
 /// redundant equal-cost node expansion on large open grids.
 /// <br/>
+/// <b>Volumetric C-Space clearance (True Clearance A*):</b>
+/// The rover is treated as a rigid volumetric body, NOT a point-mass. Every candidate
+/// cell is tested via <see cref="HasClearance(int,int,int,int,HashSet{int})"/> which checks
+/// a square kernel of side (2·RoverClearanceRadius+1)² centred on the candidate cell.
+/// If ANY cell within that bounding box is a hard obstacle, the candidate is REJECTED.
+/// This guarantees the rover's full footprint — including all wheels — never intersects
+/// obstacle geometry. API callers control the radius through RouteRequest.RoverFootprint.
+/// <br/>
+/// <b>Corner-cutting prevention:</b> Diagonal moves are additionally checked to ensure
+/// neither of the two axis-adjacent neighbours beside the diagonal is a hard obstacle.
+/// This stops the rover's bounding box from "slicing" through the corner shared by two
+/// diagonally-placed boulders.
+/// <br/>
 /// <b>Dynamic obstacles (type-aware two-tier clearance):</b>
 /// <list type="bullet">
 ///   <item><b>Hard-block set</b> — permanently impassable cells derived from the obstacle's rigid
@@ -21,13 +34,10 @@ namespace TuaApi.Algorithms;
 ///   <item><b>Soft-block set</b> — slope-gated rim cells for craters and dust-mounds. A cell in
 ///   this set is only impassable when it is ALSO in the pre-computed slope-impassable set
 ///   (i.e. the local terrain gradient there exceeds MaxInclineDeg). Gentle rim edges remain
-///   traversable; cliff-like walls are blocked — letting the algorithm find paths between
-///   the crater rim and the hard inner block.</item>
+///   traversable; cliff-like walls are blocked.
+///   For massive obstacles ("boulder-lg", "antenna") the hard kernel already spans a 7×7 or 5×5
+///   block; adding the rover footprint radius on top produces the required wide, realistic arc.</item>
 /// </list>
-/// <b>Volumetric clearance:</b> Every candidate cell is tested against the rover's
-/// physical footprint (a (2·RoverFootprint+1)² kernel) against the hard-block set,
-/// preventing the rover from clipping through narrow gaps between boulders.
-/// <br/>
 /// <b>Max-incline filter:</b> Cells where the steepest height gradient across the full
 /// rover footprint perimeter exceeds MaxInclineDeg are pre-marked impassable.
 /// The perimeter scan samples ALL (2r+1)² - 1 kernel cells to catch narrow ridges.
@@ -39,6 +49,15 @@ public static class AStarAlgorithm
     // Tie-breaking coefficient — just enough to prefer goal-directed nodes without
     // altering the path cost. Value: 1 / (GridSize_max * sqrt(2)) ≈ 1e-4.
     private const float TieBreak = 1.0001f;
+
+    /// <summary>
+    /// Default rover clearance radius (half-side in grid cells) used when the caller
+    /// does not override RouteRequest.RoverFootprint.
+    /// At GridSize=128 / TerrainScale=80 one cell ≈ 0.625 m world-space.
+    /// RoverClearanceRadius = 1 → 3×3 kernel ≈ 1.875 m each side — correct for a
+    /// 1.5 m wide rover body with wheel overhang.
+    /// </summary>
+    public const int RoverClearanceRadius = 1;
 
     /// <summary>
     /// Average crater-map value across the rover footprint above which a cell is
@@ -199,13 +218,26 @@ public static class AStarAlgorithm
                 // ── Gate 3a: Hard obstacle block (rigid per-type square kernel) ──
                 if (hardBlockSet is not null && hardBlockSet.Contains(nId)) continue;
 
-                // ── Gate 3b: Hard obstacle volumetric clearance (rover footprint)  ─
-                // Rover footprint must not overlap ANY hard-block cell, preventing
-                // narrow-gap clipping even when the centre cell is technically clear.
-                if (hardBlockSet is not null && fp > 0 && FootprintHitsObstacle(nx, nz, fp, gs, hardBlockSet))
+                // ── Gate 3b: True Clearance A* — volumetric C-Space expansion ────
+                // HasClearance checks the full (2·fp+1)² bounding box around the
+                // candidate cell. Any hard-block hit inside that box rejects the
+                // cell — the rover's footprint (all 4 wheels) is guaranteed clear.
+                if (hardBlockSet is not null && fp > 0 && !HasClearance(nx, nz, fp, gs, hardBlockSet))
                     continue;
 
-                // ── Gate 3c: Soft (slope-gated) rim zone ────────────────────────
+                // ── Gate 3c: Corner-cutting prevention ──────────────────────────
+                // For diagonal moves: if EITHER of the two axis-aligned neighbours
+                // sharing the corner is a hard block, the diagonal is forbidden.
+                // This prevents the rover's bounding box from slicing through the
+                // shared corner of two diagonally-positioned obstacles.
+                if (hardBlockSet is not null && dx[d] != 0 && dz[d] != 0)
+                {
+                    int sideA = nz         * gs + current.X; // same row as target, same col as source
+                    int sideB = current.Z  * gs + nx;        // same row as source, same col as target
+                    if (hardBlockSet.Contains(sideA) || hardBlockSet.Contains(sideB)) continue;
+                }
+
+                // ── Gate 3d: Soft (slope-gated) rim zone ────────────────────────
                 // A soft-block cell is only impassable when it is ALSO slope-impassable
                 // at this grid position. Gentle rim edges remain traversable.
                 if (softBlockSet is not null && softBlockSet.Contains(nId) && slopeImpassable.Contains(nId))
@@ -251,30 +283,70 @@ public static class AStarAlgorithm
         return ReconstructPath(parent, endId, gs, req.HeightMap, gScore, visited?.ToArray() ?? []);
     }
 
-    // ── Footprint clearance helper ────────────────────────────────────────────────
+    // ── True Clearance A* — C-Space clearance helpers ────────────────────────────
 
     /// <summary>
-    /// Returns true if any cell within the (2·fp+1)² kernel centred on (cx, cz)
-    /// is in the provided obstacle set. Cells outside the grid are ignored.
+    /// Determines whether the rover's full volumetric footprint is clear of
+    /// hard obstacles when its centre is placed at (cx, cz).
     /// </summary>
-    private static bool FootprintHitsObstacle(
-        int cx, int cz, int fp, int gs, HashSet<int> obstacleSet)
+    /// <remarks>
+    /// This is the core method that implements <b>True Clearance A* / C-Space expansion</b>.
+    /// Instead of checking only whether the centre cell is obstacle-free (point-mass
+    /// approximation), it tests a square bounding-box of side (2·<paramref name="radius"/>+1)
+    /// centred on the candidate cell — exactly modelling the rover's physical footprint.
+    /// <para>
+    /// If ANY cell within that bounding box is in <paramref name="hardBlockSet"/>, the method
+    /// returns <c>false</c> — the rover's body or wheels would clip the obstacle.
+    /// The path planner must then route around the obstacle so the FULL footprint stays clear.
+    /// </para>
+    /// <para>
+    /// For massive obstacles (e.g. "boulder-lg" with a 7×7 hard kernel), adding this
+    /// rover-radius check on top of the obstacle's own hard block forces a wide, realistic
+    /// arc around the formation, matching the visual scale of the obstacle mesh.
+    /// </para>
+    /// <para>
+    /// Cells that fall outside the grid boundary are skipped (treated as passable)
+    /// so edge-of-map paths remain functional.
+    /// </para>
+    /// </remarks>
+    /// <param name="cx">Candidate cell X (column) coordinate.</param>
+    /// <param name="cz">Candidate cell Z (row) coordinate.</param>
+    /// <param name="radius">Rover clearance half-side in grid cells (= RoverFootprint from request).</param>
+    /// <param name="gs">Grid size (one side of the square grid).</param>
+    /// <param name="hardBlockSet">Pre-computed set of permanently impassable cell IDs.</param>
+    /// <returns>
+    /// <c>true</c> if the entire (2·radius+1)² bounding box is free of hard obstacles;
+    /// <c>false</c> if any cell within the box would cause a collision.
+    /// </returns>
+    private static bool HasClearance(
+        int cx, int cz, int radius, int gs, HashSet<int> hardBlockSet)
     {
-        for (int kdz = -fp; kdz <= fp; kdz++)
+        for (int kdz = -radius; kdz <= radius; kdz++)
         {
             int kz = cz + kdz;
             if ((uint)kz >= (uint)gs) continue;
 
-            for (int kdx = -fp; kdx <= fp; kdx++)
+            for (int kdx = -radius; kdx <= radius; kdx++)
             {
                 int kx = cx + kdx;
                 if ((uint)kx >= (uint)gs) continue;
 
-                if (obstacleSet.Contains(kz * gs + kx)) return true;
+                // Any hard-block hit inside the footprint bounding box → reject.
+                if (hardBlockSet.Contains(kz * gs + kx)) return false;
             }
         }
-        return false;
+        return true; // entire footprint is clear
     }
+
+    /// <summary>
+    /// Legacy-named wrapper kept for internal callers.
+    /// Delegates directly to <see cref="HasClearance"/>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static bool FootprintHitsObstacle(
+        int cx, int cz, int fp, int gs, HashSet<int> obstacleSet)
+        => !HasClearance(cx, cz, fp, gs, obstacleSet);
 
     // ── Slope pre-scan (full-perimeter) ──────────────────────────────────────────
 

@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useSimulationStore } from '@/store/simulationStore';
 import { ROVER_SPEED } from '@/lib/constants';
+import RoverClearanceBounds from './RoverClearanceBounds';
 
 // Base Y of wheel group origin relative to chassis ground — from wheelPositions
 const BASE_WHEEL_Y = 0.0;
@@ -250,6 +251,7 @@ export default function PlaceholderRover({
   const cameraMode   = useSimulationStore(s => s.cameraMode);
   const wheelHeights = useSimulationStore(s => s.roverState.wheelHeights);
   const roverPos     = useSimulationStore(s => s.roverState.position);
+  const showClearanceBounds = useSimulationStore(s => s.showClearanceBounds);
   const fpv          = cameraMode === 'fpv';
   const moving       = status === 'animating';
 
@@ -532,6 +534,11 @@ export default function PlaceholderRover({
 
       {/* ── Robotic arm ──────────────────────────────────────────────── */}
       <RoboticArm moving={moving} />
+
+      {/* ── True Clearance A* bounding-box visualizer ─────────────────
+          Shows judges the exact (2·RoverClearanceRadius+1)² C-Space kernel
+          that prevents wheel-clipping in the A* backend.                 */}
+      <RoverClearanceBounds visible={showClearanceBounds} />
 
       {/* ── Status LED strip on body edge ────────────────────────────── */}
       <mesh position={[0, 0.28, -0.46]}>
