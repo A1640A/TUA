@@ -17,6 +17,15 @@ namespace TuaApi.Algorithms;
 /// <b>Dynamic obstacles:</b> Cells listed in <see cref="RouteRequest.AddedObstacles"/>
 /// are treated as permanently impassable without mutating the caller's HeightMap.
 /// <br/>
+/// <b>Volumetric clearance:</b> Every candidate cell is tested against the rover's
+/// physical footprint (a (2·RoverFootprint+1)² kernel). Any cell whose footprint
+/// overlaps a dynamic obstacle is rejected, preventing the rover from clipping
+/// through narrow gaps between craters or boulders.
+/// <br/>
+/// <b>Max-incline filter:</b> Cells where the steepest height gradient across the
+/// rover footprint exceeds MaxInclineDeg are pre-marked impassable (like walls),
+/// preventing the rover from attempting lunar cliff traversal.
+/// <br/>
 /// <b>Complexity:</b> O(n log n) average, where n = GridSize².
 /// </remarks>
 public static class AStarAlgorithm
@@ -38,11 +47,18 @@ public static class AStarAlgorithm
     {
         var gs = req.GridSize;
         var w  = req.CostWeights;
+        int fp = Math.Clamp(req.RoverFootprint, 0, 4); // footprint half-radius in grid cells
 
-        // Build a fast O(1) obstacle lookup from the dynamic obstacle list.
+        // ── Build fast O(1) obstacle lookup ──────────────────────────────────────
         var obstacleSet = req.AddedObstacles.Count > 0
             ? new HashSet<int>(req.AddedObstacles.Select(o => o.Z * gs + o.X))
             : null;
+
+        // ── Pre-compute slope-impassable set ─────────────────────────────────────
+        // For every cell, sample height at its footprint corners. If the steepest
+        // cross-corner Δh corresponds to a slope > MaxInclineDeg, mark impassable.
+        // This is O(n·k²) once — far cheaper than checking inside the hot A* loop.
+        var slopeImpassable = BuildSlopeImpassableSet(req.HeightMap, gs, fp, req.MaxInclineDeg);
 
         var open   = new PriorityQueue<Node, float>();
         var closed = new HashSet<int>(capacity: gs * gs / 4);
@@ -91,9 +107,20 @@ public static class AStarAlgorithm
 
                 int nId = nz * gs + nx;
 
-                // Skip already-settled cells and dynamic obstacles.
+                // Skip already-settled cells.
                 if (closed.Contains(nId)) continue;
-                if (obstacleSet is not null && obstacleSet.Contains(nId)) continue;
+
+                // ── Gate 1: Slope impassable (pre-computed) ───────────────────
+                if (slopeImpassable.Contains(nId)) continue;
+
+                // ── Gate 2: Volumetric footprint clearance ────────────────────
+                // Reject the candidate node if ANY cell within the rover's physical
+                // footprint (fp-cell radius around nx,nz) is a dynamic obstacle.
+                if (obstacleSet is not null && FootprintHitsObstacle(nx, nz, fp, gs, obstacleSet))
+                    continue;
+
+                // Single-point obstacle check (radius-0 case or no footprint extension).
+                if (obstacleSet is not null && fp == 0 && obstacleSet.Contains(nId)) continue;
 
                 // Step distance: 1.0 for cardinal, √2 for diagonal.
                 float stepDist = (dx[d] != 0 && dz[d] != 0) ? 1.414f : 1f;
@@ -134,6 +161,95 @@ public static class AStarAlgorithm
 
         return ReconstructPath(parent, endId, gs, req.HeightMap, gScore, visited?.ToArray() ?? []);
     }
+
+    // ── Footprint clearance helper ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns true if any cell within the (2·fp+1)² kernel centred on (cx, cz)
+    /// is a dynamic obstacle. Cells outside the grid are ignored (safe boundary).
+    /// </summary>
+    private static bool FootprintHitsObstacle(
+        int cx, int cz, int fp, int gs, HashSet<int> obstacleSet)
+    {
+        for (int dz = -fp; dz <= fp; dz++)
+        {
+            int kz = cz + dz;
+            if ((uint)kz >= (uint)gs) continue;
+
+            for (int dx = -fp; dx <= fp; dx++)
+            {
+                int kx = cx + dx;
+                if ((uint)kx >= (uint)gs) continue;
+
+                if (obstacleSet.Contains(kz * gs + kx)) return true;
+            }
+        }
+        return false;
+    }
+
+    // ── Slope pre-scan ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a HashSet of cell IDs that are impassable due to terrain slope.
+    /// <para>
+    /// For every cell (x,z) we sample height at the four footprint corners
+    /// (x±fp, z±fp). The maximum height delta over the footprint diagonal
+    /// (√2 * fp * cell_scale ≈ 1 grid-diagonal-unit) is converted to an angle.
+    /// If that angle exceeds <paramref name="maxInclineDeg"/> the cell is impassable.
+    /// </para>
+    /// <para>
+    /// When fp == 0 we fall back to a 1-step diagonal gradient so the check
+    /// remains meaningful even without a physical footprint.
+    /// </para>
+    /// </summary>
+    private static HashSet<int> BuildSlopeImpassableSet(
+        float[] heightMap, int gs, int fp, float maxInclineDeg)
+    {
+        if (maxInclineDeg >= 90f) return []; // disabled
+
+        float maxTan = MathF.Tan(maxInclineDeg * MathF.PI / 180f);
+        // Footprint diagonal in grid-cell units (the physical distance we compare Δh against).
+        float diagDist = fp > 0 ? fp * 1.414f : 1.414f;
+
+        var result = new HashSet<int>(capacity: gs * gs / 8);
+
+        for (int z = 0; z < gs; z++)
+        {
+            for (int x = 0; x < gs; x++)
+            {
+                int id = z * gs + x;
+                float hCenter = heightMap.Length > id ? heightMap[id] : 0f;
+
+                // Sample the footprint corners and find the max Δh.
+                float maxDeltaH = 0f;
+                int r = fp > 0 ? fp : 1; // always check at least 1 step
+
+                // Corner samples: (x±r, z±r)
+                int[] cornerDx = [-r, r, -r,  r];
+                int[] cornerDz = [-r, -r, r,  r];
+
+                for (int c = 0; c < 4; c++)
+                {
+                    int kx = x + cornerDx[c];
+                    int kz = z + cornerDz[c];
+                    if ((uint)kx >= (uint)gs || (uint)kz >= (uint)gs) continue;
+
+                    int kid = kz * gs + kx;
+                    float hCorner = heightMap.Length > kid ? heightMap[kid] : 0f;
+                    float dh = MathF.Abs(hCorner - hCenter);
+                    if (dh > maxDeltaH) maxDeltaH = dh;
+                }
+
+                // slope = Δh / horizontal_distance.  Impassable if slope > tan(maxIncline).
+                if (maxDeltaH / diagDist > maxTan)
+                    result.Add(id);
+            }
+        }
+
+        return result;
+    }
+
+    // ── Path reconstruction ───────────────────────────────────────────────────────
 
     /// <summary>
     /// Walks <paramref name="parent"/> back-pointers from the end node to rebuild the path,

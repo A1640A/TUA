@@ -53,6 +53,23 @@ public class RouteRequest
     /// Use for real-time scan animation on the frontend.
     /// </summary>
     public bool ReturnVisited { get; set; } = false;
+
+    /// <summary>
+    /// Rover half-width in grid cells used for the footprint clearance check.
+    /// A value of 1 checks a 3×3 kernel (default); 2 checks a 5×5 kernel.
+    /// The rover will never be routed through a corridor narrower than its footprint.
+    /// </summary>
+    [Range(0, 4)]
+    public int RoverFootprint { get; set; } = 1;
+
+    /// <summary>
+    /// Maximum slope angle the rover chassis can traverse, in degrees [0–90].
+    /// Any grid cell whose steepest cross-footprint height gradient exceeds this
+    /// angle is treated as permanently impassable (like a wall).
+    /// Default: 30° — consistent with typical lunar-rover design specs.
+    /// </summary>
+    [Range(0f, 90f)]
+    public float MaxInclineDeg { get; set; } = 30f;
 }
 
 /// <summary>An (X, Z) integer coordinate in the pathfinding grid.</summary>
