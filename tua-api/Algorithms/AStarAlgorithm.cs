@@ -68,25 +68,33 @@ public static class AStarAlgorithm
     // ── Per-type clearance configuration ─────────────────────────────────────────
     //
     // HardRadius: half-side of the rigid square block drawn around the obstacle centre.
-    //   HardRadius 0 → 1×1 (centre only)
-    //   HardRadius 1 → 3×3
-    //   HardRadius 2 → 5×5
-    //   HardRadius 3 → 7×7
+    //   HardRadius R → (2R+1)×(2R+1) square kernel.
     //
-    // SoftRingWidth: extra ring beyond the hard block that is slope-gated (only blocked
-    //   when the terrain gradient also exceeds MaxInclineDeg at that cell).
-    //   0 → no soft ring (purely hard).
+    // Scale reference: GRID_SIZE=128, TERRAIN_SCALE=80 → 1 cell ≈ 0.625 wu.
+    //
+    // | Variant     | Mesh rx (wu) | rx in cells | HardRadius | kernel      | coverage (wu) |
+    // |-------------|-------------|-------------|------------|-------------|---------------|
+    // | boulder-sm  | 0.30        |  ~0.5       | 0          | 1×1         | 0.625         |
+    // | boulder-md  | 1.10        |  ~1.8       | 2          | 5×5         | 3.125         |
+    // | boulder-lg  | 3.20        |  ~5.1       | 4          | 9×9         | 5.625         |
+    // | crater      | 8.00        | ~12.8       | 10         | 21×21       | 13.125        |
+    // | dust-mound  | 5.00        |  ~8.0       | 7          | 15×15       | 9.375         |
+    // | antenna     | 2.00        |  ~3.2       | 2          | 5×5         | 3.125         |
+    //
+    // SoftRingWidth: extra slope-gated rim cells beyond the hard block.
+    //   dust-mound and crater now use 0 — hard block already covers full physical extent,
+    //   and slope-gating on flat terrain had no effect, causing the rover to pass through.
     //
     private static (int HardRadius, int SoftRingWidth) GetClearanceConfig(string obstacleType) =>
         obstacleType switch
         {
-            "boulder-sm"  => (0, 0),   // 1×1 hard, no soft ring
-            "boulder-md"  => (1, 0),   // 3×3 hard
-            "boulder-lg"  => (3, 0),   // 7×7 hard — massive formation blocks wide area
-            "crater"      => (2, 2),   // 5×5 hard inner + 2-cell slope-gated rim ring
-            "dust-mound"  => (1, 2),   // 3×3 hard centre + 2-cell slope-gated rim ring
-            "antenna"     => (2, 0),   // 5×5 hard — debris field
-            _             => (1, 0),   // default: 3×3 hard
+            "boulder-sm"  => (0, 0),   //  1×1  hard — tiny chip
+            "boulder-md"  => (2, 0),   //  5×5  hard — covers rx=1.1wu with rover margin
+            "boulder-lg"  => (4, 0),   //  9×9  hard — covers rx=3.2wu formation + margin
+            "crater"      => (10, 0),  // 21×21 hard — covers full rx=8wu bowl diameter
+            "dust-mound"  => (7, 0),   // 15×15 hard — covers full rx=5wu mound + rover margin
+            "antenna"     => (2, 0),   //  5×5  hard — debris field
+            _             => (1, 0),   //  3×3  hard default
         };
 
     /// <summary>
@@ -98,6 +106,13 @@ public static class AStarAlgorithm
     /// A tuple of (Path, TotalCost, VisitedNodeIds) where VisitedNodeIds is populated
     /// only when <see cref="RouteRequest.ReturnVisited"/> is true.
     /// </returns>
+    /// <remarks>
+    /// Obstacle kernel sizes were calibrated to match the physical mesh radii
+    /// (TERRAIN_SCALE=80 / GRID_SIZE=128 → 1 cell ≈ 0.625 wu):
+    ///   dust-mound  rx=5.0wu → hardRadius=7  (15×15 kernel, 9.375wu coverage)
+    ///   crater      rx=8.0wu → hardRadius=10 (21×21 kernel, 13.125wu coverage)
+    /// Both now use fully hard blocks — soft slope-gating had no effect on flat regolith.
+    /// </remarks>
     public static AStarResult FindPath(RouteRequest req)
     {
         var gs = req.GridSize;

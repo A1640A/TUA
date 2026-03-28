@@ -96,14 +96,16 @@ public class GridNode
 /// and visual/physical type so the A* engine applies the correct clearance kernel.
 /// </summary>
 /// <remarks>
-/// Clearance kernels (full square, centred on X/Z):
+/// Clearance kernels are calibrated to the physical mesh radii
+/// (TERRAIN_SCALE=80 / GRID_SIZE=128 → 1 cell ≈ 0.625 wu). All dynamic
+/// obstacles now use fully hard blocks — slope-gating had no effect on flat regolith.
 /// <list type="table">
-///   <item><term>boulder-sm</term><description>1×1 (centre only)</description></item>
-///   <item><term>boulder-md</term><description>3×3 rigid block</description></item>
-///   <item><term>boulder-lg</term><description>7×7 rigid block</description></item>
-///   <item><term>crater</term><description>5×5 hard inner + 2-ring slope-gated rim</description></item>
-///   <item><term>dust-mound</term><description>3×3 hard centre + 2-ring slope-gated rim</description></item>
-///   <item><term>antenna</term><description>5×5 rigid block</description></item>
+///   <item><term>boulder-sm</term><description>1×1 hard (rx=0.30wu)</description></item>
+///   <item><term>boulder-md</term><description>5×5 hard (rx=1.10wu → 3.125wu coverage)</description></item>
+///   <item><term>boulder-lg</term><description>9×9 hard (rx=3.20wu → 5.625wu coverage)</description></item>
+///   <item><term>crater</term><description>21×21 hard (rx=8.00wu → 13.125wu coverage)</description></item>
+///   <item><term>dust-mound</term><description>15×15 hard (rx=5.00wu → 9.375wu coverage)</description></item>
+///   <item><term>antenna</term><description>5×5 hard (debris field)</description></item>
 /// </list>
 /// </remarks>
 public class ObstacleNode
