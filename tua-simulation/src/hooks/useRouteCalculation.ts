@@ -34,9 +34,15 @@ export function useRouteCalculation() {
   // Reads everything from latestRef.current at invocation time.
   const calculate = useCallback(async (options: { returnVisited?: boolean } = {}) => {
     const {
-      waypoints, terrain, costWeights, obstacles,
+      terrain, costWeights, obstacles,
       setStatus, setRouteResult, setError, setVisitedNodes, startMissionClock,
     } = latestRef.current;
+
+    // Read waypoints imperatively at call-time — NOT from latestRef snapshot.
+    // This guarantees useObstacleTrigger's setWaypoint('start', roverPos) call
+    // is always visible here, even if latestRef was last updated before the
+    // setWaypoint dispatch completed.
+    const { waypoints } = useSimulationStore.getState();
 
     const start = waypoints.find(w => w.type === 'start');
     const end   = waypoints.find(w => w.type === 'end');
