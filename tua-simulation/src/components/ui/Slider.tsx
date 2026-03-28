@@ -1,6 +1,7 @@
 'use client';
 interface SliderProps {
   label: string;
+  description?: string;
   value: number;
   min?: number;
   max?: number;
@@ -10,7 +11,7 @@ interface SliderProps {
 }
 
 export default function Slider({
-  label, value, min = 0, max = 10, step = 0.1, onChange, unit = '',
+  label, description, value, min = 0, max = 10, step = 0.1, onChange, unit = '',
 }: SliderProps) {
   const pct = ((value - min) / (max - min)) * 100;
   return (
@@ -21,6 +22,9 @@ export default function Slider({
           {value.toFixed(1)}{unit}
         </span>
       </div>
+      {description && (
+        <p className="text-[10px] leading-relaxed text-white/35 italic">{description}</p>
+      )}
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(Number(e.target.value))}
