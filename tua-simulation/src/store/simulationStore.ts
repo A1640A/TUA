@@ -50,12 +50,13 @@ interface SimulationStore {
 }
 
 const defaultRover: RoverState = {
-  position:    [0, 0, 0],
-  rotation:    [0, 0, 0],
+  position:     [0, 0, 0],
+  rotation:     [0, 0, 0],
   pathProgress: 0,
-  speed:       0,
-  heading:     0,
-  elevation:   0,
+  speed:        0,
+  heading:      0,
+  elevation:    0,
+  wheelHeights: [0, 0, 0, 0],
 };
 
 export const useSimulationStore = create<SimulationStore>((set) => ({

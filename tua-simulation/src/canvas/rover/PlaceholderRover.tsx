@@ -5,6 +5,9 @@ import * as THREE from 'three';
 import { useSimulationStore } from '@/store/simulationStore';
 import { ROVER_SPEED } from '@/lib/constants';
 
+// Base Y of wheel group origin relative to chassis ground — from wheelPositions
+const BASE_WHEEL_Y = 0.0;
+
 /* ─────────────────────────────────────────────────────────────────────────────
    TUA Lunar Rover — realistic procedural mesh
    Inspired by the Turkish lunar rover concept (6-wheel rocker-bogie design)
@@ -243,10 +246,12 @@ export default function PlaceholderRover({
   const dishRef    = useRef<THREE.Group>(null);
 
   /* ── Store ─────────────────────────────────────────────────────────── */
-  const status     = useSimulationStore(s => s.status);
-  const cameraMode = useSimulationStore(s => s.cameraMode);
-  const fpv        = cameraMode === 'fpv';
-  const moving     = status === 'animating';
+  const status       = useSimulationStore(s => s.status);
+  const cameraMode   = useSimulationStore(s => s.cameraMode);
+  const wheelHeights = useSimulationStore(s => s.roverState.wheelHeights);
+  const roverPos     = useSimulationStore(s => s.roverState.position);
+  const fpv          = cameraMode === 'fpv';
+  const moving       = status === 'animating';
 
   /* ── Animation ─────────────────────────────────────────────────────── */
   useFrame(({ clock }) => {
@@ -258,10 +263,39 @@ export default function PlaceholderRover({
       if (w.current) w.current.rotation.x -= spinDelta;
     });
 
-    // Body rock/roll
+    // ── Per-wheel suspension offsets ────────────────────────────────────
+    // wheelHeights = [yFL, yFR, yRL, yRR] — terrain contact Y for each corner.
+    // Chassis centre Y = roverPos[1] (already LERP-smoothed in useRoverAnimation).
+    // Each wheel's local Y = (terrainY - chassisCentreY) + BASE_WHEEL_Y
+    // This makes each wheel 'press down' onto its local terrain patch.
+    if (moving && wheelHeights) {
+      const chassisY = roverPos[1];
+      const [yFL, yFR, yRL, yRR] = wheelHeights;
+
+      // Clamp offset to ±0.35 to avoid extreme suspension travel
+      const clamp = (v: number) => Math.max(-0.35, Math.min(0.35, v));
+
+      // FL wheel (index 0 in wheelPositions[0])
+      if (wFL.current) wFL.current.position.y = clamp(yFL - chassisY) + BASE_WHEEL_Y;
+      // FM (middle-left): average of FL and RL
+      if (wFM.current) wFM.current.position.y = clamp((yFL + yRL) * 0.5 - chassisY) + BASE_WHEEL_Y;
+      // RL (rear-left, index 2)
+      if (wRL.current) wRL.current.position.y = clamp(yRL - chassisY) + BASE_WHEEL_Y;
+      // FR (front-right, index 3)
+      if (wFR.current) wFR.current.position.y = clamp(yFR - chassisY) + BASE_WHEEL_Y;
+      // RM (middle-right): average of FR and RR
+      if (wRM.current) wRM.current.position.y = clamp((yFR + yRR) * 0.5 - chassisY) + BASE_WHEEL_Y;
+      // RR (rear-right, index 5)
+      if (wRR.current) wRR.current.position.y = clamp(yRR - chassisY) + BASE_WHEEL_Y;
+    } else {
+      // Reset wheel positions when stationary
+      wheels.forEach(w => { if (w.current) w.current.position.y = BASE_WHEEL_Y; });
+    }
+
+    // Body micro-vibration (only cosmetic, very subtle when kinematic LERP is active)
     if (bodyRef.current) {
-      bodyRef.current.rotation.z = moving ? Math.sin(t * 7) * 0.018 : 0;
-      bodyRef.current.rotation.x = moving ? Math.sin(t * 5 + 1) * 0.012 : 0;
+      bodyRef.current.rotation.z = moving ? Math.sin(t * 7) * 0.006 : 0;
+      bodyRef.current.rotation.x = moving ? Math.sin(t * 5 + 1) * 0.004 : 0;
     }
 
     // Stereo camera mast pan

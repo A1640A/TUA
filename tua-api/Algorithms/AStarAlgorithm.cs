@@ -19,12 +19,15 @@ namespace TuaApi.Algorithms;
 /// <br/>
 /// <b>Volumetric clearance:</b> Every candidate cell is tested against the rover's
 /// physical footprint (a (2·RoverFootprint+1)² kernel). Any cell whose footprint
-/// overlaps a dynamic obstacle is rejected, preventing the rover from clipping
-/// through narrow gaps between craters or boulders.
+/// overlaps a dynamic obstacle OR whose crater density average exceeds the saturation
+/// threshold is rejected, preventing the rover from clipping through narrow gaps
+/// between craters or boulders.
 /// <br/>
-/// <b>Max-incline filter:</b> Cells where the steepest height gradient across the
-/// rover footprint exceeds MaxInclineDeg are pre-marked impassable (like walls),
+/// <b>Max-incline filter:</b> Cells where the steepest height gradient across the full
+/// rover footprint perimeter exceeds MaxInclineDeg are pre-marked impassable (like walls),
 /// preventing the rover from attempting lunar cliff traversal.
+/// The perimeter scan samples ALL (2r+1)² - 1 kernel cells — not just the 4 diagonal
+/// corners — ensuring narrow slope ridges are never missed.
 /// <br/>
 /// <b>Complexity:</b> O(n log n) average, where n = GridSize².
 /// </remarks>
@@ -33,6 +36,12 @@ public static class AStarAlgorithm
     // Tie-breaking coefficient — just enough to prefer goal-directed nodes without
     // altering the path cost. Value: 1 / (GridSize_max * sqrt(2)) ≈ 1e-4.
     private const float TieBreak = 1.0001f;
+
+    /// <summary>
+    /// Average crater-map value across the rover footprint above which a cell is
+    /// treated as an impassable obstacle (rover would be driving inside a crater bowl).
+    /// </summary>
+    private const float CraterSaturationThreshold = 0.65f;
 
     /// <summary>
     /// Finds the optimal path from <see cref="RouteRequest.StartNode"/> to
@@ -55,10 +64,12 @@ public static class AStarAlgorithm
             : null;
 
         // ── Pre-compute slope-impassable set ─────────────────────────────────────
-        // For every cell, sample height at its footprint corners. If the steepest
-        // cross-corner Δh corresponds to a slope > MaxInclineDeg, mark impassable.
-        // This is O(n·k²) once — far cheaper than checking inside the hot A* loop.
+        // O(n·k²) once — far cheaper than checking inside the hot A* loop.
         var slopeImpassable = BuildSlopeImpassableSet(req.HeightMap, gs, fp, req.MaxInclineDeg);
+
+        // ── Pre-compute crater-saturation impassable set ─────────────────────────
+        // Cells where the rover footprint average exceeds the crater threshold.
+        var craterImpassable = BuildCraterFootprintImpassableSet(req.CraterMap, gs, fp);
 
         var open   = new PriorityQueue<Node, float>();
         var closed = new HashSet<int>(capacity: gs * gs / 4);
@@ -110,12 +121,15 @@ public static class AStarAlgorithm
                 // Skip already-settled cells.
                 if (closed.Contains(nId)) continue;
 
-                // ── Gate 1: Slope impassable (pre-computed) ───────────────────
+                // ── Gate 1: Slope impassable (pre-computed full-perimeter scan) ──
                 if (slopeImpassable.Contains(nId)) continue;
 
-                // ── Gate 2: Volumetric footprint clearance ────────────────────
-                // Reject the candidate node if ANY cell within the rover's physical
-                // footprint (fp-cell radius around nx,nz) is a dynamic obstacle.
+                // ── Gate 2: Crater saturation impassable (footprint average) ─────
+                if (craterImpassable.Contains(nId)) continue;
+
+                // ── Gate 3: Volumetric footprint clearance (dynamic obstacles) ───
+                // Reject if ANY cell within the rover's physical footprint (fp-cell
+                // radius around nx,nz) is a dynamic obstacle.
                 if (obstacleSet is not null && FootprintHitsObstacle(nx, nz, fp, gs, obstacleSet))
                     continue;
 
@@ -171,14 +185,14 @@ public static class AStarAlgorithm
     private static bool FootprintHitsObstacle(
         int cx, int cz, int fp, int gs, HashSet<int> obstacleSet)
     {
-        for (int dz = -fp; dz <= fp; dz++)
+        for (int kdz = -fp; kdz <= fp; kdz++)
         {
-            int kz = cz + dz;
+            int kz = cz + kdz;
             if ((uint)kz >= (uint)gs) continue;
 
-            for (int dx = -fp; dx <= fp; dx++)
+            for (int kdx = -fp; kdx <= fp; kdx++)
             {
-                int kx = cx + dx;
+                int kx = cx + kdx;
                 if ((uint)kx >= (uint)gs) continue;
 
                 if (obstacleSet.Contains(kz * gs + kx)) return true;
@@ -187,19 +201,22 @@ public static class AStarAlgorithm
         return false;
     }
 
-    // ── Slope pre-scan ────────────────────────────────────────────────────────────
+    // ── Slope pre-scan (full-perimeter) ──────────────────────────────────────────
 
     /// <summary>
     /// Builds a HashSet of cell IDs that are impassable due to terrain slope.
     /// <para>
-    /// For every cell (x,z) we sample height at the four footprint corners
-    /// (x±fp, z±fp). The maximum height delta over the footprint diagonal
-    /// (√2 * fp * cell_scale ≈ 1 grid-diagonal-unit) is converted to an angle.
-    /// If that angle exceeds <paramref name="maxInclineDeg"/> the cell is impassable.
+    /// For every cell (x,z) we scan ALL cells within the footprint kernel
+    /// (not just the 4 diagonal corners). This guarantees that narrow slope ridges
+    /// — which can be missed with corner-only sampling — are correctly identified.
     /// </para>
     /// <para>
-    /// When fp == 0 we fall back to a 1-step diagonal gradient so the check
-    /// remains meaningful even without a physical footprint.
+    /// The maximum height delta between the cell centre and any kernel cell is
+    /// converted to a slope angle. If that angle exceeds <paramref name="maxInclineDeg"/>
+    /// the cell is impassable.
+    /// </para>
+    /// <para>
+    /// When fp == 0, falls back to a 1-step 8-directional scan.
     /// </para>
     /// </summary>
     private static HashSet<int> BuildSlopeImpassableSet(
@@ -208,8 +225,11 @@ public static class AStarAlgorithm
         if (maxInclineDeg >= 90f) return []; // disabled
 
         float maxTan = MathF.Tan(maxInclineDeg * MathF.PI / 180f);
-        // Footprint diagonal in grid-cell units (the physical distance we compare Δh against).
-        float diagDist = fp > 0 ? fp * 1.414f : 1.414f;
+
+        // Maximum horizontal distance from centre to any kernel corner = fp * √2 grid-units.
+        // We normalise Δh against this worst-case horizontal extent.
+        int   scanRadius = fp > 0 ? fp : 1;
+        float diagDist   = scanRadius * 1.414f;
 
         var result = new HashSet<int>(capacity: gs * gs / 8);
 
@@ -217,31 +237,96 @@ public static class AStarAlgorithm
         {
             for (int x = 0; x < gs; x++)
             {
-                int id = z * gs + x;
+                int   id      = z * gs + x;
                 float hCenter = heightMap.Length > id ? heightMap[id] : 0f;
 
-                // Sample the footprint corners and find the max Δh.
                 float maxDeltaH = 0f;
-                int r = fp > 0 ? fp : 1; // always check at least 1 step
 
-                // Corner samples: (x±r, z±r)
-                int[] cornerDx = [-r, r, -r,  r];
-                int[] cornerDz = [-r, -r, r,  r];
-
-                for (int c = 0; c < 4; c++)
+                // ── Full-perimeter kernel scan ────────────────────────────────
+                // Iterate every cell in the (2·r+1)² kernel around (x,z).
+                for (int kdz = -scanRadius; kdz <= scanRadius; kdz++)
                 {
-                    int kx = x + cornerDx[c];
-                    int kz = z + cornerDz[c];
-                    if ((uint)kx >= (uint)gs || (uint)kz >= (uint)gs) continue;
+                    int kz = z + kdz;
+                    if ((uint)kz >= (uint)gs) continue;
 
-                    int kid = kz * gs + kx;
-                    float hCorner = heightMap.Length > kid ? heightMap[kid] : 0f;
-                    float dh = MathF.Abs(hCorner - hCenter);
-                    if (dh > maxDeltaH) maxDeltaH = dh;
+                    for (int kdx = -scanRadius; kdx <= scanRadius; kdx++)
+                    {
+                        if (kdx == 0 && kdz == 0) continue; // skip centre
+
+                        int kx = x + kdx;
+                        if ((uint)kx >= (uint)gs) continue;
+
+                        int   kid     = kz * gs + kx;
+                        float hCorner = heightMap.Length > kid ? heightMap[kid] : 0f;
+                        float dh      = MathF.Abs(hCorner - hCenter);
+
+                        // Use the actual Euclidean distance to this kernel cell as the
+                        // horizontal reference — more accurate than a fixed maxDiag.
+                        float horizDist = MathF.Sqrt(kdx * kdx + kdz * kdz);
+                        float slopeHere = dh / horizDist;
+
+                        // Track the maximum slope tangent in the kernel.
+                        if (slopeHere > maxDeltaH) maxDeltaH = slopeHere;
+                    }
                 }
 
-                // slope = Δh / horizontal_distance.  Impassable if slope > tan(maxIncline).
-                if (maxDeltaH / diagDist > maxTan)
+                // slope = Δh / horizontal — impassable if slope > tan(maxIncline).
+                if (maxDeltaH > maxTan)
+                    result.Add(id);
+            }
+        }
+
+        return result;
+    }
+
+    // ── Crater-density footprint pre-scan ─────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a HashSet of cell IDs that are impassable because the rover footprint
+    /// overlaps a high-density crater interior.
+    /// <para>
+    /// For every cell (x,z), the average <c>CraterMap</c> value across the
+    /// (2·fp+1)² kernel is computed.  If it exceeds
+    /// <see cref="CraterSaturationThreshold"/> the cell is impassable — the rover
+    /// would be navigating squarely inside a crater bowl.
+    /// </para>
+    /// <para>
+    /// When fp == 0 a single-cell check is used (average == cell value).
+    /// </para>
+    /// </summary>
+    private static HashSet<int> BuildCraterFootprintImpassableSet(
+        float[] craterMap, int gs, int fp)
+    {
+        if (craterMap.Length == 0) return [];
+
+        int scanRadius = fp > 0 ? fp : 0;
+        var result = new HashSet<int>(capacity: gs * gs / 16);
+
+        for (int z = 0; z < gs; z++)
+        {
+            for (int x = 0; x < gs; x++)
+            {
+                int   id   = z * gs + x;
+                float sum  = 0f;
+                int   cnt  = 0;
+
+                for (int kdz = -scanRadius; kdz <= scanRadius; kdz++)
+                {
+                    int kz = z + kdz;
+                    if ((uint)kz >= (uint)gs) continue;
+
+                    for (int kdx = -scanRadius; kdx <= scanRadius; kdx++)
+                    {
+                        int kx = x + kdx;
+                        if ((uint)kx >= (uint)gs) continue;
+
+                        int kid = kz * gs + kx;
+                        sum += craterMap.Length > kid ? craterMap[kid] : 0f;
+                        cnt++;
+                    }
+                }
+
+                if (cnt > 0 && (sum / cnt) > CraterSaturationThreshold)
                     result.Add(id);
             }
         }

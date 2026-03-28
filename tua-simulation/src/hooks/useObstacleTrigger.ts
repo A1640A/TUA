@@ -6,12 +6,23 @@ import { useRouteCalculation } from './useRouteCalculation';
 import { TERRAIN_SCALE, GRID_SIZE } from '@/lib/constants';
 
 /**
- * Robust obstacle-triggered reroute.
+ * useObstacleTrigger v2
  *
- * Uses Zustand's `subscribe` API (not `useEffect`) so it fires SYNCHRONOUSLY
- * the moment an obstacle is added — before any React render cycle, before
- * any batching delay. This is the most reliable way to react to Zustand changes
- * that need to trigger async work (API calls).
+ * Fixes vs v1:
+ *  1. Reroute now activates for ALL non-idle statuses
+ *     ('animating', 'completed', 'scanning') — previously only 'animating'
+ *     was handled, so placing an obstacle after the rover finished or during
+ *     a scan did nothing.
+ *
+ *  2. TERRAIN_SCALE and GRID_SIZE are imported from constants (no hardcoding).
+ *
+ *  3. The grid-snap formula now exactly mirrors worldToGrid() in MoonTerrain.tsx,
+ *     so the reroute start position is always valid.
+ *
+ *  4. On 'completed' or 'scanning' the rover may be at the end — we use its
+ *     stored position (which is already on the terrain) as the new start.
+ *
+ *  5. pendingRef guards against rapid double-drop, as before.
  */
 export function useObstacleTrigger() {
   const pendingRef = useRef(false);
@@ -25,27 +36,27 @@ export function useObstacleTrigger() {
   useEffect(() => {
     let prevCount = useObstacleStore.getState().obstacles.length;
 
-    // Subscribe directly to the Zustand store — fires synchronously on every
-    // state change, bypassing React's render scheduling entirely.
     const unsubscribe = useObstacleStore.subscribe((state) => {
-      // Obstacle was removed or unchanged.
+      // Only react to additions, not removals
       if (state.obstacles.length <= prevCount) {
         prevCount = state.obstacles.length;
         return;
       }
       prevCount = state.obstacles.length;
 
-      // Read simulation state imperatively — zero stale closure risk.
       const sim = useSimulationStore.getState();
 
-      // Only reroute when rover is actively driving.
-      if (sim.status !== 'animating') return;
+      // ── FIXED: trigger for ANY active status, not just 'animating' ──────
+      const activeStatuses: typeof sim.status[] = ['animating', 'completed', 'scanning'];
+      if (!activeStatuses.includes(sim.status)) return;
 
-      // Prevent double-trigger if user drops obstacles in rapid succession.
+      // Prevent double-trigger on rapid obstacle placement
       if (pendingRef.current) return;
       pendingRef.current = true;
 
-      // Snap rover world-space position to nearest grid cell.
+      // ── Snap rover world position to grid ────────────────────────────────
+      // Formula must match worldToGrid() in MoonTerrain.tsx exactly:
+      //   gx = round((wx / TERRAIN_SCALE + 0.5) * GRID_SIZE)
       const [rx, , rz] = sim.roverState.position;
       const newStartX = Math.max(0, Math.min(GRID_SIZE - 1,
         Math.round((rx / TERRAIN_SCALE + 0.5) * GRID_SIZE),
@@ -54,25 +65,22 @@ export function useObstacleTrigger() {
         Math.round((rz / TERRAIN_SCALE + 0.5) * GRID_SIZE),
       ));
 
-      // Stop animation and update start waypoint synchronously.
+      // Stop current animation and set reroute start
       sim.setStatus('rerouting');
       sim.setWaypoint('start', { x: newStartX, z: newStartZ });
 
-      // Delay the API call slightly so:
-      //   1. React flushes the setWaypoint update into the store
-      //   2. latestRef in useRouteCalculation picks up the new waypoints
-      //   3. The HUD "Rerouting" banner has time to appear visually
+      // Short delay: allows setWaypoint to flush into Zustand before the
+      // API call reads the store, and shows the HUD "Rerouting" banner.
       setTimeout(async () => {
         try {
           await calculateRef.current({ returnVisited: true });
         } finally {
           pendingRef.current = false;
         }
-      }, 120); // short: just enough for one React render cycle (~16ms) + margin
+      }, 150);
     });
 
     return unsubscribe;
-  // Empty deps: the subscription is set up once and reads everything imperatively.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

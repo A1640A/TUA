@@ -3,6 +3,7 @@ import { useSimulationStore } from '@/store/simulationStore';
 import { useTerrainStore } from '@/store/terrainStore';
 import { useObstacleStore } from '@/store/obstacleStore';
 import { useRouteCalculation } from './useRouteCalculation';
+import { TERRAIN_SCALE, GRID_SIZE } from '@/lib/constants';
 import type { GridNode } from '@/types/simulation.types';
 
 /**
@@ -42,15 +43,12 @@ export function useSimulation() {
     if (store.status !== 'animating' && store.status !== 'completed') return;
     store.setStatus('rerouting');
 
-    // Update the start waypoint to the rover's current grid position
-    // (approximate from world position using terrain constants).
     const [rx, , rz] = store.roverState.position;
-    const TERRAIN_SCALE = 50;
-    const gx = Math.round((rx / TERRAIN_SCALE + 0.5) * 128);
-    const gz = Math.round((rz / TERRAIN_SCALE + 0.5) * 128);
+    const gx = Math.round((rx / TERRAIN_SCALE + 0.5) * GRID_SIZE);
+    const gz = Math.round((rz / TERRAIN_SCALE + 0.5) * GRID_SIZE);
     store.setWaypoint('start', {
-      x: Math.max(0, Math.min(127, gx)),
-      z: Math.max(0, Math.min(127, gz)),
+      x: Math.max(0, Math.min(GRID_SIZE - 1, gx)),
+      z: Math.max(0, Math.min(GRID_SIZE - 1, gz)),
     });
 
     await calculate({ returnVisited: true });

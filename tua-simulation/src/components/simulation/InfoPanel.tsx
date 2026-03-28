@@ -9,38 +9,45 @@ import { USE_MOCK_API } from '@/lib/constants';
  */
 export default function InfoPanel() {
   return (
-    <div className="flex flex-col gap-3 w-64">
+    <div className="flex flex-col gap-3 w-68">
       <Panel title="Görev Telemetrisi">
         <RouteMetrics />
       </Panel>
 
       <Panel title="Bağlantı Durumu">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className={[
-              'w-2 h-2 rounded-full',
-              USE_MOCK_API ? 'bg-yellow-400' : 'bg-green-400 animate-pulse',
-            ].join(' ')} />
-            <span className="text-xs text-white/60">
-              {USE_MOCK_API ? 'Mock Modu (İstemci taraflı)' : 'C# API Bağlandı'}
-            </span>
-          </div>
-          {!USE_MOCK_API && (
-            <p className="text-[10px] font-mono text-white/25 break-all">
-              {process.env.NEXT_PUBLIC_API_URL}
-            </p>
-          )}
+        <div className="flex items-center gap-2.5">
+          <span className={[
+            'w-2.5 h-2.5 rounded-full shrink-0',
+            USE_MOCK_API ? 'bg-yellow-400' : 'bg-green-400 animate-pulse',
+          ].join(' ')} />
+          <span className="text-[12px] text-white/75 font-medium">
+            {USE_MOCK_API ? 'Mock Modu (İstemci Taraflı)' : 'C# API Bağlandı'}
+          </span>
         </div>
+        {!USE_MOCK_API && (
+          <p className="mt-1.5 text-[10px] font-mono text-white/35 break-all pl-5">
+            {process.env.NEXT_PUBLIC_API_URL}
+          </p>
+        )}
       </Panel>
 
       <Panel title="Kullanım Kılavuzu">
-        <ul className="space-y-2.5 text-[11px] text-white/45">
-          <li className="flex gap-2.5"><span className="text-cyan-400 font-mono font-bold shrink-0">01</span>Başlangıç ve hedef noktasını haritaya tıklayarak belirle</li>
-          <li className="flex gap-2.5"><span className="text-cyan-400 font-mono font-bold shrink-0">02</span>A* maliyet ağırlıklarını senaryona göre ayarla</li>
-          <li className="flex gap-2.5"><span className="text-cyan-400 font-mono font-bold shrink-0">03</span><strong className="text-white/60">"Rotayı Hesapla"</strong> butonuna bas</li>
-          <li className="flex gap-2.5"><span className="text-cyan-400 font-mono font-bold shrink-0">04</span>Rover animasyonunu ve tarama görselini izle</li>
-          <li className="flex gap-2.5"><span className="text-orange-400 font-mono font-bold shrink-0">05</span><strong className="text-white/60">Engel ekle</strong> → hareket eden rover rota yeniden hesaplar</li>
-          <li className="flex gap-2.5"><span className="text-white/30 font-mono font-bold shrink-0">06</span>Sağ tık ile engeli kaldır</li>
+        <ul className="space-y-3">
+          {[
+            { num: '01', color: 'text-cyan-400',   text: 'Başlangıç ve hedef noktasını haritaya tıklayarak belirle' },
+            { num: '02', color: 'text-cyan-400',   text: 'A* maliyet ağırlıklarını senaryona göre ayarla' },
+            { num: '03', color: 'text-cyan-400',   text: '"Rotayı Hesapla" butonuna bas', bold: true },
+            { num: '04', color: 'text-cyan-400',   text: 'Rover animasyonunu ve tarama görselini izle' },
+            { num: '05', color: 'text-orange-400', text: 'Engel ekle → hareket eden rover rotayı yeniden hesaplar', highlight: true },
+            { num: '06', color: 'text-white/40',   text: 'Sağ tıkla engeli kaldır' },
+          ].map(({ num, color, text, bold, highlight }) => (
+            <li key={num} className="flex gap-3 items-start">
+              <span className={`${color} font-mono font-bold text-[12px] shrink-0 mt-px`}>{num}</span>
+              <span className={`text-[12px] leading-[1.5] ${highlight ? 'text-white/80' : 'text-white/60'} ${bold ? 'font-medium' : ''}`}>
+                {bold ? <strong className="text-white/85 font-semibold">{text}</strong> : text}
+              </span>
+            </li>
+          ))}
         </ul>
       </Panel>
     </div>

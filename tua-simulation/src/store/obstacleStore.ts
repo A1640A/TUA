@@ -1,17 +1,28 @@
 import { create } from 'zustand';
 import type { Obstacle, GridNode } from '@/types/simulation.types';
-import { TERRAIN_SCALE, TERRAIN_HEIGHT_SCALE, GRID_SIZE } from '@/lib/constants';
+import { TERRAIN_SCALE, GRID_SIZE } from '@/lib/constants';
+import { getWorldY } from '@/canvas/terrain/MoonTerrain';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Convert a grid cell to world-space position.
+ *
+ * CRITICAL FIX: Previously used `heightMap[idx] * TERRAIN_HEIGHT_SCALE` for Y.
+ * This ignored the sphere-curvature correction that MoonTerrain.tsx bakes into
+ * every vertex.  The obstacle visual appeared at a different elevation than the
+ * terrain surface at that grid cell.
+ *
+ * Now uses getWorldY() — the exact same function MoonTerrain.tsx uses — so
+ * obstacle meshes are always co-planar with the terrain surface.
+ */
 function gridToWorld(
   grid:      GridNode,
   heightMap: Float32Array | null,
 ): [number, number, number] {
   const wx  = (grid.x / GRID_SIZE - 0.5) * TERRAIN_SCALE;
   const wz  = (grid.z / GRID_SIZE - 0.5) * TERRAIN_SCALE;
-  const idx = grid.z * GRID_SIZE + grid.x;
-  const wy  = heightMap ? (heightMap[idx] ?? 0) * TERRAIN_HEIGHT_SCALE : 0;
+  const wy  = heightMap ? getWorldY(heightMap, wx, wz) : 0;
   return [wx, wy, wz];
 }
 

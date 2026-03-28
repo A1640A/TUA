@@ -38,9 +38,9 @@ export interface Waypoint {
 
 /** Live world-space state of the rover during animation. */
 export interface RoverState {
-  /** Three.js world-space position [x, y, z]. */
+  /** Three.js world-space position [x, y, z]. Chassis centre, LERP-smoothed. */
   position:     [number, number, number];
-  /** Euler rotation [x, y, z] in radians. */
+  /** Euler rotation [x, y, z] in radians. Derived from 4-wheel cross-product. */
   rotation:     [number, number, number];
   /** Path completion ratio in [0, 1]. */
   pathProgress: number;
@@ -50,6 +50,12 @@ export interface RoverState {
   heading:      number;
   /** Current terrain elevation in Three.js units. */
   elevation:    number;
+  /**
+   * Terrain contact Y at each of the 4 corner wheels:
+   * [Front-Left, Front-Right, Rear-Left, Rear-Right]
+   * Used by PlaceholderRover for individual wheel suspension offsets.
+   */
+  wheelHeights: [number, number, number, number];
 }
 
 // ─── Obstacles ────────────────────────────────────────────────────────────────

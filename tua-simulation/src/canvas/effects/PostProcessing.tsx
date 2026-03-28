@@ -1,41 +1,38 @@
 'use client';
-import { EffectComposer, Bloom, Vignette, ChromaticAberration, Noise } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
 import { BlendFunction } from 'postprocessing';
 import { Vector2 } from 'three';
 
 /**
- * Post-processing pass stack for a cinematic space-monitor aesthetic.
+ * PostProcessing — cinematic space aesthetic.
  *
- * - **Bloom**: Makes all emissive surfaces (path tube, crater rings, sensor heads)
- *   glow with physically-based bloom.
- * - **ChromaticAberration**: Subtle lens-aberration at screen edges — the single
- *   biggest signal that this is a "real instrument", not a game.
- * - **Noise**: Minimal film grain (opacity 0.018) replicating the visual noise of
- *   a real space-station telemetry feed.
- * - **Vignette**: Darkens screen corners to focus the viewer on the centre.
+ * Changes:
+ *  - Noise effect REMOVED  → was causing the "old TV static" appearance
+ *  - Bloom kept but softened (luminanceThreshold raised, smoothing wider)
+ *  - ChromaticAberration kept very subtle for lens realism
+ *  - Vignette lightened so corners are not overly crushed
  */
 export default function PostProcessing() {
   return (
     <EffectComposer>
+      {/* Soft bloom — emissive path tube, rover lights, waypoint beacons */}
       <Bloom
-        intensity={0.9}
-        luminanceThreshold={0.45}
-        luminanceSmoothing={0.8}
+        intensity={0.75}
+        luminanceThreshold={0.55}
+        luminanceSmoothing={0.9}
         mipmapBlur
       />
+      {/* Barely-visible lens distortion at extreme edges only */}
       <ChromaticAberration
-        offset={new Vector2(0.0008, 0.0008)}
+        offset={new Vector2(0.0004, 0.0004)}
         blendFunction={BlendFunction.NORMAL}
         radialModulation={false}
         modulationOffset={0}
       />
-      <Noise
-        opacity={0.018}
-        blendFunction={BlendFunction.ADD}
-      />
+      {/* Gentle vignette — focuses eye on centre without crushing blacks */}
       <Vignette
-        offset={0.38}
-        darkness={0.7}
+        offset={0.42}
+        darkness={0.5}
         blendFunction={BlendFunction.NORMAL}
       />
     </EffectComposer>

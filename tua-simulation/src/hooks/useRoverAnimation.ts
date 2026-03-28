@@ -3,88 +3,84 @@ import { useRef, useCallback, useEffect } from 'react';
 import * as THREE from 'three';
 import { useSimulationStore } from '@/store/simulationStore';
 import { useTerrainStore } from '@/store/terrainStore';
-import { ROVER_SPEED, TERRAIN_HEIGHT_SCALE, GRID_SIZE, TERRAIN_SCALE } from '@/lib/constants';
+import {
+  ROVER_SPEED, TERRAIN_HEIGHT_SCALE, GRID_SIZE, TERRAIN_SCALE,
+  ROUTE_Y_LIFT,
+} from '@/lib/constants';
+import { getWorldY, TERRAIN_GROUND_OFFSET } from '@/canvas/terrain/MoonTerrain';
 
 /**
- * Drives the rover along the CatmullRom spline each animation frame.
+ * useRoverAnimation v4 — 4-Wheel Raycasting Kinematics
  *
- * v2 changes — terrain height snapping:
- * - The rover's Y position is now determined by sampling the procedural
- *   heightMap at the rover's current (X, Z) world coordinate.
- * - A small constant ROVER_GROUND_OFFSET lifts the rover chassis just above
- *   the surface to avoid z-fighting.
- * - Roll / pitch of the rover are approximated by sampling X+dx and Z+dz
- *   neighbours and computing the local surface normal, then tilting the
- *   rover group accordingly.
+ * Architecture upgrade from v3:
  *
- * The displacement-map sphere also introduces a very slight downward curvature.
- * We approximate this on the CPU using the same formula as MoonTerrainHandle
- * (see terrain/MoonTerrain.tsx) so the rover does not float above the horizon.
+ *  v3 used finite-difference slope (NORMAL_DELTA) to approximate pitch/roll.
+ *  This treats the rover as a POINT, ignoring its physical width/length.
+ *
+ *  v4 solution — True rigid-body kinematics:
+ *  1. Compute the 4 wheel contact positions in world space from the rover's
+ *     current position + heading (FL, FR, RL, RR).
+ *  2. Sample getWorldY() at each wheel position (O(1) bilinear heightmap lookup).
+ *  3. Build two edge vectors of the chassis plane via the wheel heights.
+ *  4. Cross-product those vectors → exact chassis normal (physics-correct UP vector).
+ *  5. Derive Pitch and Roll from atan2 of the normal components.
+ *  6. LERP all smoothed values (Y, pitch, roll) via persistent useRef accumulators
+ *     to simulate heavy shock absorbers — no React setState, no frame stall.
+ *  7. Export wheelHeights[FL, FR, RL, RR] so PlaceholderRover can independently
+ *     offset each wheel group for per-axle suspension.
  */
 
-/** Sphere radius must match the value in MoonTerrain.tsx */
-const SPHERE_RADIUS = 400;
-/** How far above the terrain surface the rover chassis bottom sits. */
-const ROVER_GROUND_OFFSET = 0.3;
-/** Small delta used to finite-difference the local surface normal. */
-const NORMAL_DELTA = 0.6;
+// ─── Rover physical geometry constants (must match PlaceholderRover.tsx) ──────
 
-// ─── Bilinear heightmap sample (CPU-side, mirrors MoonTerrain logic) ──────────
-function sampleGridHeight(
-  heightMap: Float32Array | readonly number[],
-  wx: number, wz: number,
-): number {
-  const halfS = TERRAIN_SCALE / 2;
-  const u = Math.max(0, Math.min(1, (wx + halfS) / TERRAIN_SCALE));
-  const v = Math.max(0, Math.min(1, (wz + halfS) / TERRAIN_SCALE));
-  const gx = u * (GRID_SIZE - 1);
-  const gz = v * (GRID_SIZE - 1);
-  const x0 = Math.floor(gx), x1 = Math.min(x0 + 1, GRID_SIZE - 1);
-  const z0 = Math.floor(gz), z1 = Math.min(z0 + 1, GRID_SIZE - 1);
-  const fx = gx - x0, fz = gz - z0;
-  const h00 = heightMap[z0 * GRID_SIZE + x0] ?? 0;
-  const h10 = heightMap[z0 * GRID_SIZE + x1] ?? 0;
-  const h01 = heightMap[z1 * GRID_SIZE + x0] ?? 0;
-  const h11 = heightMap[z1 * GRID_SIZE + x1] ?? 0;
-  return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz;
-}
+/** Half-distance between left and right wheel contact points (world units). */
+const WHEEL_HALF_WIDTH  = 0.72;
 
-/**
- * Full terrain height at world (wx, wz):
- *  = procedural heightmap contribution  +  sphere curvature offset
- *
- * The sphere is centred at Y = -SPHERE_RADIUS and faces upward; the downward
- * dip at horizontal distance r from the centre is:
- *   Δy = SPHERE_RADIUS - sqrt(SPHERE_RADIUS² - r²)   (negative, i.e. dips down)
- */
-function getFullTerrainY(
-  heightMap: Float32Array | readonly number[],
-  wx: number, wz: number,
-): number {
-  const procH = sampleGridHeight(heightMap, wx, wz) * TERRAIN_HEIGHT_SCALE;
-  const r2 = (wx * wx + wz * wz);
-  const sphereDip = -(SPHERE_RADIUS - Math.sqrt(Math.max(0, SPHERE_RADIUS * SPHERE_RADIUS - r2)));
-  return procH + sphereDip;
-}
+/** Half-distance between front and rear axles (world units). */
+const WHEEL_HALF_LENGTH = 0.72;
+
+// ─── LERP constants ────────────────────────────────────────────────────────────
+
+/** Y-position LERP factor per frame — low = heavy suspension, high = stiff. */
+const LERP_Y     = 0.12;
+
+/** Pitch LERP factor per frame — slightly faster than Y for responsiveness. */
+const LERP_PITCH = 0.18;
+
+/** Roll LERP factor per frame. */
+const LERP_ROLL  = 0.18;
+
+// ─── Reusable THREE objects (avoid per-frame allocation) ──────────────────────
+const _fwd    = new THREE.Vector3();
+const _side   = new THREE.Vector3();
+const _flPos  = new THREE.Vector3();
+const _frPos  = new THREE.Vector3();
+const _rlPos  = new THREE.Vector3();
+const _rrPos  = new THREE.Vector3();
+const _axVec  = new THREE.Vector3();
+const _siVec  = new THREE.Vector3();
+const _upVec  = new THREE.Vector3();
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Drives the rover along the CatmullRom spline each animation frame.
- *
- * @param curve - CatmullRom spline built from the route API response.
- * @returns `{ animate }` — call inside `useFrame` every tick.
- */
 export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
   const progressRef  = useRef(0);
   const prevPosRef   = useRef<THREE.Vector3 | null>(null);
+
+  // Smooth accumulators — stored in ref so LERP doesn't trigger React renders
+  const smoothY     = useRef(0);
+  const smoothPitch = useRef(0);
+  const smoothRoll  = useRef(0);
+
   const { setRoverState, setStatus, status, routeResult } = useSimulationStore();
   const terrain = useTerrainStore(s => s.terrain);
 
-  // ── Reset progress whenever the route changes ──────────────────────────────
+  // Reset progress and smooth accumulators whenever route changes
   useEffect(() => {
-    progressRef.current = 0;
-    prevPosRef.current  = null;
+    progressRef.current  = 0;
+    prevPosRef.current   = null;
+    smoothY.current      = 0;
+    smoothPitch.current  = 0;
+    smoothRoll.current   = 0;
   }, [routeResult]);
 
   const animate = useCallback(() => {
@@ -98,57 +94,122 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
     const pos = curve.getPoint(progressRef.current);
     const tan = curve.getTangent(progressRef.current);
 
-    // ── Heading ───────────────────────────────────────────────────────────────
+    // Heading (yaw) from curve tangent
     const headingRad = Math.atan2(tan.x, tan.z);
-    const headingDeg = ((headingRad * (180 / Math.PI)) + 360) % 360;
+    const headingDeg = ((headingRad * 180 / Math.PI) + 360) % 360;
 
-    // ── Speed ─────────────────────────────────────────────────────────────────
+    // Speed
     let speed = 0;
-    if (prevPosRef.current) {
-      speed = pos.distanceTo(prevPosRef.current) * 60;
-    }
+    if (prevPosRef.current) speed = pos.distanceTo(prevPosRef.current) * 60;
     prevPosRef.current = pos.clone();
 
-    // ── Terrain-snapped Y position ────────────────────────────────────────────
-    // Use the CPU height-map to snap the rover to the actual surface elevation.
-    // Fall back to the spline Y if terrain data is not yet loaded.
-    let groundY: number;
+    // ── 4-Wheel Raycasting ─────────────────────────────────────────────────────
+    let centerY = pos.y;
+    let pitchRaw = 0;
+    let rollRaw  = 0;
+    let yFL = 0, yFR = 0, yRL = 0, yRR = 0;
+
     if (terrain?.heightMap) {
-      groundY = getFullTerrainY(terrain.heightMap, pos.x, pos.z);
-    } else {
-      groundY = pos.y;
+      const hm = terrain.heightMap;
+
+      // Rover local axes in world space (derived from heading):
+      //   fwd  = direction rover is facing (+Z in rover-local → XZ world via heading)
+      //   side = rover's right (+X in rover-local)
+      _fwd.set(Math.sin(headingRad),  0, Math.cos(headingRad));
+      _side.set(Math.cos(headingRad), 0, -Math.sin(headingRad));
+
+      // 4 wheel contact positions:
+      //   FL = pos - side*halfW - fwd*halfL   (front = -Z in rover local = toward heading)
+      //   FR = pos + side*halfW - fwd*halfL
+      //   RL = pos - side*halfW + fwd*halfL
+      //   RR = pos + side*halfW + fwd*halfL
+      _flPos.copy(pos)
+        .addScaledVector(_side, -WHEEL_HALF_WIDTH)
+        .addScaledVector(_fwd,  -WHEEL_HALF_LENGTH);
+      _frPos.copy(pos)
+        .addScaledVector(_side,  WHEEL_HALF_WIDTH)
+        .addScaledVector(_fwd,  -WHEEL_HALF_LENGTH);
+      _rlPos.copy(pos)
+        .addScaledVector(_side, -WHEEL_HALF_WIDTH)
+        .addScaledVector(_fwd,   WHEEL_HALF_LENGTH);
+      _rrPos.copy(pos)
+        .addScaledVector(_side,  WHEEL_HALF_WIDTH)
+        .addScaledVector(_fwd,   WHEEL_HALF_LENGTH);
+
+      // Sample terrain height at each wheel (O(1) bilinear lookup — same function
+      // used to build the visual mesh, so zero drift between physics and visuals):
+      yFL = getWorldY(hm, _flPos.x, _flPos.z);
+      yFR = getWorldY(hm, _frPos.x, _frPos.z);
+      yRL = getWorldY(hm, _rlPos.x, _rlPos.z);
+      yRR = getWorldY(hm, _rrPos.x, _rrPos.z);
+
+      // Chassis centre Y = average of all 4 contact points + clearance offset
+      centerY = (yFL + yFR + yRL + yRR) * 0.25 + TERRAIN_GROUND_OFFSET;
+
+      // ── Cross-product chassis normal ─────────────────────────────────────────
+      //
+      // Build two edge vectors that lie IN the chassis plane:
+      //
+      //   axleVec = mid-right − mid-left
+      //     = ((FR_y + RR_y)/2) − ((FL_y + RL_y)/2)  in world Y direction
+      //     combined with the side direction in XZ.
+      //
+      //   sideVec = mid-rear − mid-front
+      //     = ((RL_y + RR_y)/2) − ((FL_y + FR_y)/2)  in world Y direction
+      //     combined with the fwd direction in XZ.
+      //
+      // These are full 3D vectors, not just Y deltas:
+
+      const midLeftY  = (yFL + yRL) * 0.5;
+      const midRightY = (yFR + yRR) * 0.5;
+      const midFrontY = (yFL + yFR) * 0.5;
+      const midRearY  = (yRL + yRR) * 0.5;
+
+      // axleVec  points from left axle midpoint to right axle midpoint
+      // = side direction in XZ + Δheight in Y, over 2*halfW horizontal distance
+      _axVec.set(
+        _side.x * (2 * WHEEL_HALF_WIDTH),
+        midRightY - midLeftY,
+        _side.z * (2 * WHEEL_HALF_WIDTH),
+      ).normalize();
+
+      // sideVec points from front axle midpoint to rear axle midpoint
+      // = fwd direction in XZ + Δheight in Y, over 2*halfL horizontal distance
+      _siVec.set(
+        _fwd.x * (2 * WHEEL_HALF_LENGTH),
+        midRearY - midFrontY,
+        _fwd.z * (2 * WHEEL_HALF_LENGTH),
+      ).normalize();
+
+      // Chassis UP = cross(axleVec, sideVec)
+      // Right-hand rule: cross of right×forward = upward when surface is flat.
+      _upVec.crossVectors(_axVec, _siVec).normalize();
+
+      // Extract Euler angles from the chassis UP vector:
+      //   Pitch (rotation.x): how much the front dips/rises
+      //     → arctan of the Z-component vs Y-component of the UP vector
+      //   Roll  (rotation.z): how much the right side dips/rises
+      //     → arctan of the X-component vs Y-component of the UP vector
+      pitchRaw = Math.atan2(-_upVec.z, _upVec.y);
+      rollRaw  = Math.atan2( _upVec.x, _upVec.y);
     }
-    const snappedY = groundY + ROVER_GROUND_OFFSET;
 
-    // ── Surface normal → rover tilt ───────────────────────────────────────────
-    // Finite-difference the surface in X and Z to get the local normal,
-    // then decompose into pitch (X rotation) and roll (Z rotation).
-    let pitchRad = 0;
-    let rollRad  = 0;
-    if (terrain?.heightMap) {
-      const hPX = getFullTerrainY(terrain.heightMap, pos.x + NORMAL_DELTA, pos.z);
-      const hNX = getFullTerrainY(terrain.heightMap, pos.x - NORMAL_DELTA, pos.z);
-      const hPZ = getFullTerrainY(terrain.heightMap, pos.x, pos.z + NORMAL_DELTA);
-      const hNZ = getFullTerrainY(terrain.heightMap, pos.x, pos.z - NORMAL_DELTA);
-      const slopeX = (hPX - hNX) / (2 * NORMAL_DELTA); // dY/dX
-      const slopeZ = (hPZ - hNZ) / (2 * NORMAL_DELTA); // dY/dZ
-
-      // Project slope into rover's local (heading-aligned) frame.
-      const cosH = Math.cos(headingRad);
-      const sinH = Math.sin(headingRad);
-
-      // Pitch = forward slope; Roll = lateral slope
-      pitchRad = -Math.atan(slopeZ * cosH + slopeX * sinH) * 0.6; // dampen a little
-      rollRad  = Math.atan(slopeX * cosH - slopeZ * sinH) * 0.6;
-    }
+    // ── Suspension LERP ───────────────────────────────────────────────────────
+    // Interpolate toward target values — simulates heavy shock absorbers.
+    // LERP_Y = 0.12 means ~88% of the previous value carries over each frame,
+    // giving a natural 'settling' effect under gravity.
+    smoothY.current     += (centerY    - smoothY.current)     * LERP_Y;
+    smoothPitch.current += (pitchRaw   - smoothPitch.current) * LERP_PITCH;
+    smoothRoll.current  += (rollRaw    - smoothRoll.current)  * LERP_ROLL;
 
     setRoverState({
-      position:    [pos.x, snappedY, pos.z],
-      rotation:    [pitchRad, headingRad, rollRad],
+      position:     [pos.x, smoothY.current, pos.z],
+      rotation:     [smoothPitch.current, headingRad, smoothRoll.current],
       pathProgress: progressRef.current,
       speed,
-      heading:     headingDeg,
-      elevation:   snappedY,
+      heading:      headingDeg,
+      elevation:    smoothY.current,
+      wheelHeights: [yFL, yFR, yRL, yRR],
     });
 
     if (progressRef.current >= 1) {
@@ -158,8 +219,11 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
   }, [curve, status, terrain, setRoverState, setStatus]);
 
   const reset = useCallback(() => {
-    progressRef.current = 0;
-    prevPosRef.current  = null;
+    progressRef.current  = 0;
+    prevPosRef.current   = null;
+    smoothY.current      = 0;
+    smoothPitch.current  = 0;
+    smoothRoll.current   = 0;
   }, []);
 
   return { animate, reset };
@@ -167,22 +231,24 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
 
 /**
  * Converts API RoutePoints to Three.js world-space Vector3 array.
- *
- * @param points      - Path from the route API response.
- * @param gridSize    - Grid dimension (default GRID_SIZE constant)
- * @param terrainScale - Three.js terrain width/depth in world units.
- * @param heightScale  - Three.js terrain height multiplier.
+ * Points are lifted by ROUTE_Y_LIFT above the terrain surface so that
+ * the route tube never clips through the mesh.
  */
 export function routePointsToVectors(
   points:       { x: number; z: number; y: number }[],
   gridSize:     number = GRID_SIZE,
   terrainScale: number = TERRAIN_SCALE,
   heightScale:  number = TERRAIN_HEIGHT_SCALE,
+  heightMap?:   Float32Array | readonly number[],
 ): THREE.Vector3[] {
   return points.map(p => {
     const wx = (p.x / gridSize - 0.5) * terrainScale;
     const wz = (p.z / gridSize - 0.5) * terrainScale;
-    const wy = p.y * heightScale;
+    // Use getWorldY when heightMap available — gives exact terrain Y including
+    // sphere curvature.  Fall back to API-supplied p.y * heightScale otherwise.
+    const wy = heightMap
+      ? getWorldY(heightMap, wx, wz) + ROUTE_Y_LIFT
+      : p.y * heightScale + ROUTE_Y_LIFT;
     return new THREE.Vector3(wx, wy, wz);
   });
 }

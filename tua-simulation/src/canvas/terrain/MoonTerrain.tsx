@@ -8,45 +8,54 @@ import { useObstacleStore } from '@/store/obstacleStore';
 import { TERRAIN_SCALE, TERRAIN_HEIGHT_SCALE, GRID_SIZE } from '@/lib/constants';
 
 /**
- * MoonTerrain v2 — NASA displacement map driven spherical lunar surface.
+ * MoonTerrain v3 — Single source of truth for both visuals and navigation.
  *
- * Key design decisions:
- *  - Uses a large SphereGeometry (cap only) so the surface has a natural
- *    planetary curve. Only the top ~quarterof the sphere is visible; a
- *    high radius (SPHERE_RADIUS) keeps the curvature gentle.
- *  - The NASA heightmap ("lunar-displacement.jpg") is loaded via THREE.TextureLoader
- *    and bound as `displacementMap` on a MeshStandardMaterial.
- *  - Vertex colours from the procedural terrain store are still applied ON TOP
- *    so the A* cost visualisation layer is preserved.
- *  - A ref-forwarded `getTerrainHeight(wx, wz)` raycaster helper is exported
- *    so the rover animation hook can snap the rover to the actual GPU surface.
+ * Architecture fix (v2 → v3):
+ *  v2 used SphereGeometry + GPU displacementMap.  This created a fundamental
+ *  mismatch: the rover and route were positioned using the *procedural* CPU
+ *  heightMap while the *visual* surface was driven by the NASA texture on the
+ *  GPU — two completely independent elevation sources, so the rover appeared
+ *  to float or pass through craters.
  *
- * Coordinate system reminder:
- *   World X ∈ [-TERRAIN_SCALE/2, TERRAIN_SCALE/2]
- *   World Z ∈ [-TERRAIN_SCALE/2, TERRAIN_SCALE/2]
+ *  v3 solution:
+ *  1. Return to PlaneGeometry, same grid as the heightMap (GRID_SIZE×GRID_SIZE).
+ *  2. Set vertex Y from the procedural heightMap directly in JS → visual surface
+ *     now MATCHES the navigation data exactly.
+ *  3. Apply the NASA lunar-displacement.jpg as a COLOR texture (map property)
+ *     blended with the vertex-colour slope layer — adds photographic realism
+ *     without misaligning the height data.
+ *  4. Add a subtle CPU-baked sphere curvature correction to each vertex so the
+ *     horizon looks gently curved (same formula used by the rover hook).
+ *  5. Export getTerrainHeight() via ref — now returns the EXACT same value
+ *     used to build the geometry, guaranteeing rover/terrain alignment.
+ *
+ * Coordinate system:
+ *   World X ∈ [-TERRAIN_SCALE/2, +TERRAIN_SCALE/2]
+ *   World Z ∈ [-TERRAIN_SCALE/2, +TERRAIN_SCALE/2]
  *   World Y = elevation (up)
  */
 
-// ─── Geometry constants ───────────────────────────────────────────────────────
-/** Large sphere radius — big enough that the surface feels nearly flat but curved. */
-const SPHERE_RADIUS = 400;
-/** Angular half-width of the visible cap (radians).  π/9 ≈ 20° gives a cap
- *  that comfortably covers TERRAIN_SCALE units at SPHERE_RADIUS. */
-const CAP_HALF_ANGLE = Math.PI / 9;
-/** Number of longitudinal / latitudinal segments — must be high for displacement. */
-const SEG = 512;
+// ─── Constants ─────────────────────────────────────────────────────────────────
+/**
+ * Virtual sphere radius for the planetary-curve bake.
+ * Curvature dip at terrain edge = TERRAIN_SCALE²/(8·R).
+ * R=360:  55²/2880 ≈ 1.05 units — clearly visible horizon bow.
+ * R=600:  55²/4800 ≈ 0.63 units — subtle, barely perceptible.
+ */
+const SPHERE_RADIUS = 360;
+/** Rover chassis clearance above raw vertex Y (world units). */
+export const TERRAIN_GROUND_OFFSET = 0.22;
 
-/** How many Three.js units the displacement map raises/lowers the surface. */
-const DISPLACEMENT_SCALE = 4.5;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// ─── Utility: bilinear sample of the procedural heightMap ────────────────────
-function sampleHeight(
+/** Bilinear heightMap sample at world (wx, wz). Returns normalised 0..1. */
+function sampleHeightNorm(
   heightMap: Float32Array | readonly number[],
   wx: number, wz: number,
 ): number {
   const halfS = TERRAIN_SCALE / 2;
-  const u = Math.max(0, Math.min(1, (wx + halfS) / TERRAIN_SCALE));
-  const v = Math.max(0, Math.min(1, (wz + halfS) / TERRAIN_SCALE));
+  const u  = Math.max(0, Math.min(1, (wx + halfS) / TERRAIN_SCALE));
+  const v  = Math.max(0, Math.min(1, (wz + halfS) / TERRAIN_SCALE));
   const gx = u * (GRID_SIZE - 1);
   const gz = v * (GRID_SIZE - 1);
   const x0 = Math.floor(gx), x1 = Math.min(x0 + 1, GRID_SIZE - 1);
@@ -59,10 +68,32 @@ function sampleHeight(
   return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz;
 }
 
-// ─── Public ref handle ────────────────────────────────────────────────────────
+/** Sphere-curvature dip at horizontal distance r from centre. */
+function sphereDip(wx: number, wz: number): number {
+  const r2 = wx * wx + wz * wz;
+  return -(SPHERE_RADIUS - Math.sqrt(Math.max(0, SPHERE_RADIUS * SPHERE_RADIUS - r2)));
+}
+
+/** Full world-Y for a given (wx, wz): procedural height + sphere curvature. */
+export function getWorldY(
+  heightMap: Float32Array | readonly number[],
+  wx: number, wz: number,
+): number {
+  return sampleHeightNorm(heightMap, wx, wz) * TERRAIN_HEIGHT_SCALE + sphereDip(wx, wz);
+}
+
+// ─── Ref handle ────────────────────────────────────────────────────────────────
 export interface MoonTerrainHandle {
-  /** Sample approximate world-space Y for a given (worldX, worldZ) position. */
+  /** Exact world-Y at (wx, wz), guaranteed to match visual geometry. */
   getTerrainHeight: (wx: number, wz: number) => number;
+}
+
+// ─── WorldToGrid helper (also used by parent) ─────────────────────────────────
+function worldToGrid(wx: number, wz: number) {
+  return {
+    x: Math.max(0, Math.min(GRID_SIZE - 1, Math.round((wx / TERRAIN_SCALE + 0.5) * GRID_SIZE))),
+    z: Math.max(0, Math.min(GRID_SIZE - 1, Math.round((wz / TERRAIN_SCALE + 0.5) * GRID_SIZE))),
+  };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -78,99 +109,114 @@ const MoonTerrain = forwardRef<MoonTerrainHandle>(function MoonTerrain(_props, f
   const selectedVariant  = useObstacleStore(s => s.selectedVariant);
   const setPlacingObstacle = useObstacleStore(s => s.setPlacingObstacle);
 
-  // ── Displacement texture ───────────────────────────────────────────────────
-  const displacementMap = useLoader(THREE.TextureLoader, '/lunar-displacement.jpg');
+  // ── NASA lunar texture — used as colour/albedo overlay only ───────────────
+  const lunarTex = useLoader(THREE.TextureLoader, '/lunar-displacement.jpg');
   useMemo(() => {
-    if (!displacementMap) return;
-    displacementMap.wrapS = THREE.RepeatWrapping;
-    displacementMap.wrapT = THREE.RepeatWrapping;
-    // No repeat — the whole map covers the whole terrain
-    displacementMap.repeat.set(1, 1);
-  }, [displacementMap]);
+    if (!lunarTex) return;
+    lunarTex.wrapS = lunarTex.wrapT = THREE.RepeatWrapping;
+    lunarTex.repeat.set(1, 1);
+    lunarTex.anisotropy = 16;  // maximum filter quality for oblique views
+    lunarTex.minFilter = THREE.LinearMipmapLinearFilter;
+    lunarTex.magFilter = THREE.LinearFilter;
+  }, [lunarTex]);
 
-  // ── Geometry: spherical cap ────────────────────────────────────────────────
-  // We build a full sphere but position the mesh so its north-pole faces up.
-  // For rendering we use a sphere with many segments; Three.js SphereGeometry
-  // already covers the whole sphere — we clip the view with the camera.
+  // ── Base geometry — PlaneGeometry aligned with heightMap grid ─────────────
   const geometry = useMemo(() => {
-    const geo = new THREE.SphereGeometry(
-      SPHERE_RADIUS,
-      SEG,
-      SEG,
-      0,              // phiStart
-      Math.PI * 2,    // phiLength (full circle)
-      0,              // thetaStart (from north pole)
-      CAP_HALF_ANGLE, // thetaLength (just the cap)
+    const geo = new THREE.PlaneGeometry(
+      TERRAIN_SCALE, TERRAIN_SCALE,
+      GRID_SIZE - 1, GRID_SIZE - 1,
     );
+    geo.rotateX(-Math.PI / 2); // lay flat in XZ plane
     return geo;
   }, []);
 
-  // ── Vertex-colour pass from procedural terrain ─────────────────────────────
+  // ── Vertex update: Y from heightMap + curvature, colours from slope ────────
   useEffect(() => {
     if (!terrain || !geometry) return;
 
-    const pos   = geometry.attributes.position as THREE.BufferAttribute;
-    const count = pos.count;
+    const pos    = geometry.attributes.position as THREE.BufferAttribute;
+    const uvAttr = geometry.attributes.uv      as THREE.BufferAttribute;
+    const count  = pos.count;
 
+    // Ensure colour buffer
     let colBuf = geometry.attributes.color as THREE.BufferAttribute | undefined;
     if (!colBuf || colBuf.count !== count) {
       colBuf = new THREE.BufferAttribute(new Float32Array(count * 3), 3);
       geometry.setAttribute('color', colBuf);
     }
 
-    const flatColor  = new THREE.Color('#6e7a8a');
-    const slopeColor = new THREE.Color('#b07850');
-    const tmp        = new THREE.Color();
+    // ── Four-zone lunar colour palette ────────────────────────────────────
+    // Based on Hapke (1981) photometric model for mature lunar regolith:
+    //  Zone 1 — flat mare regolith:   cool blue-grey   (#606878)
+    //  Zone 2 — steep slope / rock:   warm ochre-tan   (#907258)
+    //  Zone 3 — crater floor basalt:  very dark brown  (#1e1a16)
+    //  Zone 4 — rim ejecta highlight: light grey-white (#aabbc8)
+    const regolithColor  = new THREE.Color('#606878');
+    const slopeColor     = new THREE.Color('#907258');
+    const craterFloor    = new THREE.Color('#1e1a16');
+    const rimHighlight   = new THREE.Color('#aabbc8');
+    const tmp            = new THREE.Color();
 
     for (let i = 0; i < count; i++) {
-      // Map sphere-surface UV (from [0,1]) back to grid index — approximate
-      const uvAttr = geometry.attributes.uv as THREE.BufferAttribute;
-      const u = uvAttr ? (uvAttr.getX(i)) : 0;
-      const v = uvAttr ? (uvAttr.getY(i)) : 0;
-      const gx = Math.max(0, Math.min(GRID_SIZE - 1, Math.round(u * (GRID_SIZE - 1))));
-      const gz = Math.max(0, Math.min(GRID_SIZE - 1, Math.round((1 - v) * (GRID_SIZE - 1))));
+      const u  = uvAttr.getX(i);
+      const v  = uvAttr.getY(i);
+      const wx = (u - 0.5) * TERRAIN_SCALE;
+      const wz = (0.5 - v) * TERRAIN_SCALE;
+
+      // Bake vertex Y from heightMap + sphere curvature
+      const wy = getWorldY(terrain.heightMap, wx, wz);
+      pos.setY(i, wy);
+
+      // Grid sample indices
+      const gx  = Math.max(0, Math.min(GRID_SIZE - 1, Math.round(u * (GRID_SIZE - 1))));
+      const gz  = Math.max(0, Math.min(GRID_SIZE - 1, Math.round((1 - v) * (GRID_SIZE - 1))));
       const idx = gz * GRID_SIZE + gx;
-      const s = Math.min(terrain.slopeMap[idx] ?? 0, 1);
-      tmp.lerpColors(flatColor, slopeColor, s * 2.2);
+
+      const slope = Math.min((terrain.slopeMap[idx]  ?? 0) * 3.2, 1.0);
+      const crat  = Math.min((terrain.craterMap[idx]  ?? 0),       1.0);
+
+      // Layer 1: flat regolith → slope rock
+      tmp.lerpColors(regolithColor, slopeColor, slope);
+      // Layer 2: darken crater interior (deep bowl)
+      if (crat > 0.55) tmp.lerpColors(tmp, craterFloor, (crat - 0.55) / 0.45);
+      // Layer 3: brighten near-rim zone (ejecta + fresh material)
+      if (crat > 0.15 && crat < 0.50) {
+        const rimT = 1 - Math.abs((crat - 0.32) / 0.18);
+        tmp.lerpColors(tmp, rimHighlight, Math.max(0, rimT) * 0.35);
+      }
+
       colBuf.setXYZ(i, tmp.r, tmp.g, tmp.b);
     }
+
+    pos.needsUpdate    = true;
     colBuf.needsUpdate = true;
-    // NOTE: we do NOT re-displace vertices here — the GPU displacement map
-    //       handles that in the shader.  computeVertexNormals() is still useful
-    //       for the vertex-colour blending.
     geometry.computeVertexNormals();
   }, [terrain, geometry]);
 
-  // ── Material ───────────────────────────────────────────────────────────────
-  const material = useMemo(() => new THREE.MeshStandardMaterial({
-    vertexColors:    true,
-    displacementMap,
-    displacementScale: DISPLACEMENT_SCALE,
-    roughness:       0.95,
-    metalness:       0.04,
-    color:           new THREE.Color('#80889a'),
-  }), [displacementMap]);
+  // ── Material: vertex colours + NASA photo overlay ─────────────────────────
+  const material = useMemo(() => {
+    const mat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness:    0.92,   // slightly less rough for sharper specular on rim
+      metalness:    0.02,
+      // Vertex colours drive the main albedo; NASA texture adds micro-detail
+      color:        new THREE.Color('#888ea0'),
+    });
+    if (lunarTex) {
+      mat.map = lunarTex;
+    }
+    return mat;
+  }, [lunarTex]);
 
-  // ── Public handle: getTerrainHeight (CPU-side approximation) ───────────────
-  // The GPU displacement is approximated on the CPU using the procedural
-  // heightMap stored in Zustand (which drives the same elevation visually).
+  // ── Ref handle — returns exact vertex height ───────────────────────────────
   useImperativeHandle(fwdRef, () => ({
     getTerrainHeight(wx: number, wz: number): number {
       if (!terrain?.heightMap) return 0;
-      const h = sampleHeight(terrain.heightMap, wx, wz);
-      // Sphere curvature contribution at the given radius offset from centre
-      const dSq = (wx * wx + wz * wz) / (SPHERE_RADIUS * SPHERE_RADIUS);
-      const sphereY = SPHERE_RADIUS * (1 - Math.sqrt(Math.max(0, 1 - dSq))) * -1;
-      return h * TERRAIN_HEIGHT_SCALE + sphereY;
+      return getWorldY(terrain.heightMap, wx, wz);
     },
   }), [terrain]);
 
-  // ── Coordinate mapping ─────────────────────────────────────────────────────
-  const worldToGrid = (wx: number, wz: number) => ({
-    x: Math.max(0, Math.min(GRID_SIZE - 1, Math.round((wx / TERRAIN_SCALE + 0.5) * GRID_SIZE))),
-    z: Math.max(0, Math.min(GRID_SIZE - 1, Math.round((wz / TERRAIN_SCALE + 0.5) * GRID_SIZE))),
-  });
-
+  // ── Click / hover interaction ──────────────────────────────────────────────
   const handleClick = useCallback((e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
     const grid = worldToGrid(e.point.x, e.point.z);
@@ -185,16 +231,11 @@ const MoonTerrain = forwardRef<MoonTerrainHandle>(function MoonTerrain(_props, f
 
   const crosshair = placementMode || placingObstacle;
 
-  // ── Mesh transform: rotate sphere so its north-pole faces +Y ──────────────
-  // SphereGeometry starts at the north pole (0 thetaStart) which is at +Y
-  // by default — no extra rotation needed.  We translate DOWN by SPHERE_RADIUS
-  // so the cap top sits at Y=0.
   return (
     <mesh
       ref={meshRef}
       geometry={geometry}
       material={material}
-      position={[0, -SPHERE_RADIUS, 0]}
       receiveShadow
       castShadow
       onClick={handleClick}

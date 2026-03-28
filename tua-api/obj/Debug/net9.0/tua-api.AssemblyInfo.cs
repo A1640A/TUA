@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("tua-api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+43358a4358a9815ba5cce14abf40a760e855b16c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4dc5e267621b15a01f9ae18a24e2f4d9c31400a6")]
 [assembly: System.Reflection.AssemblyProductAttribute("tua-api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("tua-api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -56,20 +56,27 @@ public class RouteRequest
 
     /// <summary>
     /// Rover half-width in grid cells used for the footprint clearance check.
-    /// A value of 1 checks a 3×3 kernel (default); 2 checks a 5×5 kernel.
-    /// The rover will never be routed through a corridor narrower than its footprint.
+    /// <list type="bullet">
+    ///   <item><term>0</term><description>Single-cell check (no lateral clearance)</description></item>
+    ///   <item><term>1</term><description>3×3 kernel — default, ~rover body width</description></item>
+    ///   <item><term>2</term><description>5×5 kernel — conservative, avoids narrow gaps</description></item>
+    ///   <item><term>3</term><description>7×7 kernel — wide berth around large boulders</description></item>
+    /// </list>
+    /// At GridSize=128 / TerrainScale=55 each grid cell ≈ 0.43 m real-world.
+    /// A footprint of 1 gives ~1.3 m lateral clearance each side — correct for a 1.5 m-wide rover.
     /// </summary>
     [Range(0, 4)]
     public int RoverFootprint { get; set; } = 1;
 
     /// <summary>
     /// Maximum slope angle the rover chassis can traverse, in degrees [0–90].
-    /// Any grid cell whose steepest cross-footprint height gradient exceeds this
-    /// angle is treated as permanently impassable (like a wall).
-    /// Default: 30° — consistent with typical lunar-rover design specs.
+    /// Any grid cell whose steepest full-perimeter height gradient across the rover
+    /// footprint exceeds this angle is treated as permanently impassable (like a wall).
+    /// Default: 25° — consistent with TUA rover design specs and the frontend
+    /// ROVER_MAX_SLOPE_DEG constant.
     /// </summary>
     [Range(0f, 90f)]
-    public float MaxInclineDeg { get; set; } = 30f;
+    public float MaxInclineDeg { get; set; } = 25f;
 }
 
 /// <summary>An (X, Z) integer coordinate in the pathfinding grid.</summary>
