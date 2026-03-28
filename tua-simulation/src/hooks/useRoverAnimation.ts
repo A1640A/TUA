@@ -31,6 +31,13 @@ import { getWorldY, TERRAIN_GROUND_OFFSET } from '@/canvas/terrain/MoonTerrain';
  *   Three.js default XYZ Euler means: first pitch (world X), then yaw (world Y
  *   after X-rotation!), then roll. Correct vehicle order is YXZ.
  *
+ * BUG 4 — Front/rear wheel contact positions INVERTED (root cause of upside-down rover):
+ *   _flPos used addScaledVector(_fwd, -WHEEL_HALF_LENGTH) → placed FL BEHIND the rover.
+ *   _rlPos used addScaledVector(_fwd, +WHEEL_HALF_LENGTH) → placed RL IN FRONT.
+ *   This swapped midFrontY/midRearY → _siVec.y was negated → cross product _siVec × _axVec
+ *   pointed DOWN instead of UP → qTilt rotated the rover 180° → it appeared upside-down.
+ *   Fix: FL/FR at +fwd (forward), RL/RR at -fwd (backward). _siVec.y = midFrontY - midRearY.
+ *
  * v5 SOLUTION — single quaternion per frame:
  *   1. qHeading = setFromAxisAngle(worldY, headingRad)
  *   2. upLocal  = upVec.applyQuaternion(qHeading⁻¹)   ← normal in heading frame
@@ -41,6 +48,7 @@ import { getWorldY, TERRAIN_GROUND_OFFSET } from '@/canvas/terrain/MoonTerrain';
  *      • provides natural suspension damping in one operation
  *   6. Extract XYZ Euler from smoothQ → <group rotation={[rx,ry,rz]}> (correct by construction)
  */
+
 
 // ─── Rover physical geometry constants (must match PlaceholderRover.tsx) ──────
 
@@ -142,10 +150,13 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
       _side.set(Math.cos(headingRad), 0, -Math.sin(headingRad));
 
       // 4 wheel contact positions
-      _flPos.copy(pos).addScaledVector(_side, -WHEEL_HALF_WIDTH).addScaledVector(_fwd, -WHEEL_HALF_LENGTH);
-      _frPos.copy(pos).addScaledVector(_side,  WHEEL_HALF_WIDTH).addScaledVector(_fwd, -WHEEL_HALF_LENGTH);
-      _rlPos.copy(pos).addScaledVector(_side, -WHEEL_HALF_WIDTH).addScaledVector(_fwd,  WHEEL_HALF_LENGTH);
-      _rrPos.copy(pos).addScaledVector(_side,  WHEEL_HALF_WIDTH).addScaledVector(_fwd,  WHEEL_HALF_LENGTH);
+      // +fwd  = forward direction (nose of rover)
+      // -fwd  = backward direction (tail of rover)
+      // +side = right side,  -side = left side
+      _flPos.copy(pos).addScaledVector(_side, -WHEEL_HALF_WIDTH).addScaledVector(_fwd,  WHEEL_HALF_LENGTH); // front-left
+      _frPos.copy(pos).addScaledVector(_side,  WHEEL_HALF_WIDTH).addScaledVector(_fwd,  WHEEL_HALF_LENGTH); // front-right
+      _rlPos.copy(pos).addScaledVector(_side, -WHEEL_HALF_WIDTH).addScaledVector(_fwd, -WHEEL_HALF_LENGTH); // rear-left
+      _rrPos.copy(pos).addScaledVector(_side,  WHEEL_HALF_WIDTH).addScaledVector(_fwd, -WHEEL_HALF_LENGTH); // rear-right
 
       // Sample terrain height at each wheel
       yFL = getWorldY(hm, _flPos.x, _flPos.z);
@@ -168,9 +179,13 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
         _side.z * (2 * WHEEL_HALF_WIDTH),
       ).normalize();
 
+      // _siVec: vector from rear axle midpoint to front axle midpoint.
+      // XZ = +fwd direction (front is at +fwd).
+      // Y  = midFrontY - midRearY  (positive when rover is climbing forward).
+      // Combined with _axVec (pointing right), cross product _siVec × _axVec = UP.
       _siVec.set(
         _fwd.x * (2 * WHEEL_HALF_LENGTH),
-        midRearY - midFrontY,
+        midFrontY - midRearY,
         _fwd.z * (2 * WHEEL_HALF_LENGTH),
       ).normalize();
 
