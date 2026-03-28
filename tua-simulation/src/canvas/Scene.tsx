@@ -11,7 +11,7 @@ import Lighting       from './environment/Lighting';
 import StarField      from './environment/StarField';
 import EarthInSky     from './environment/EarthInSky';
 import MoonTerrain    from './terrain/MoonTerrain';
-import CraterField    from './terrain/CraterField';
+// CraterField removed — danger rings hidden per user request.
 import ObstacleField  from './terrain/ObstacleField';
 import Rover          from './rover/Rover';
 import RoverTrail     from './rover/RoverTrail';
@@ -41,7 +41,6 @@ function SceneContent() {
       <StarField />
       <EarthInSky />
       <MoonTerrain />
-      <CraterField />
       <ObstacleField />
       <Rover />
       <RoverTrail />
