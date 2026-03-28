@@ -32,8 +32,11 @@ export default function PlaceholderRover({ position, rotation }: {
 
   const mastCamRef = useRef<THREE.Mesh>(null);
 
-  const status = useSimulationStore(s => s.status);
-  const speed  = useSimulationStore(s => s.roverState.speed);
+  const status     = useSimulationStore(s => s.status);
+  const speed      = useSimulationStore(s => s.roverState.speed);
+  const cameraMode = useSimulationStore(s => s.cameraMode);
+  const fpv        = cameraMode === 'fpv';
+  void speed;
 
   useFrame(({ clock }) => {
     const moving = status === 'animating';
@@ -48,14 +51,14 @@ export default function PlaceholderRover({ position, rotation }: {
       bodyRef.current.rotation.z = moving ? Math.sin(t * 8) * 0.025 : 0;
     }
 
-    // Mast camera slow scan rotation.
-    if (mastCamRef.current) {
+    // Mast camera slow scan rotation — disabled in FPV (it's the actual camera).
+    if (mastCamRef.current && !fpv) {
       mastCamRef.current.rotation.y = Math.sin(t * 0.8) * Math.PI * 0.35;
     }
   });
 
   return (
-    <group ref={groupRef} position={position} rotation={rotation}>
+    <group ref={groupRef} position={position} rotation={rotation} visible={!fpv}>
       {/* ── Chassis / body ─────────────────────────────────────────────── */}
       <mesh ref={bodyRef} castShadow position={[0, 0.3, 0]}>
         <boxGeometry args={[1.4, 0.35, 0.9]} />

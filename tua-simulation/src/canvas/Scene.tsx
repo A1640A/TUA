@@ -20,6 +20,7 @@ import Waypoints      from './route/Waypoints';
 import PostProcessing from './effects/PostProcessing';
 import DustParticles  from './effects/DustParticles';
 import ScanOverlay    from './effects/ScanOverlay';
+import CameraManager  from './CameraManager';
 import { useRoverAnimation, useRouteCurve } from './SceneAnimator';
 import { useTerrain }    from '@/hooks/useTerrain';
 
@@ -30,7 +31,9 @@ function SceneContent() {
 
   const placementMode    = useSimulationStore(s => s.placementMode);
   const placingObstacle  = useObstacleStore(s => s.placingObstacle);
+  const cameraMode       = useSimulationStore(s => s.cameraMode);
   const placing = !!(placementMode || placingObstacle);
+  const isOrbit = cameraMode === 'orbit';
 
   return (
     <>
@@ -46,14 +49,17 @@ function SceneContent() {
       <Waypoints />
       <DustParticles />
       <ScanOverlay />
+      {/* CameraManager handles FPV camera take-over and smooth transitions. */}
+      <CameraManager />
       <OrbitControls
         makeDefault
+        enabled={isOrbit}
         minDistance={8}
         maxDistance={90}
         maxPolarAngle={Math.PI / 2.05}
-        enablePan={!placing}
-        enableRotate={!placing}
-        enableZoom={true}
+        enablePan={isOrbit && !placing}
+        enableRotate={isOrbit && !placing}
+        enableZoom={isOrbit}
         dampingFactor={0.08}
         enableDamping
       />

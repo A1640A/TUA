@@ -9,6 +9,7 @@ import {
 } from '@/lib/constants';
 
 export type PlacementMode = 'start' | 'end' | null;
+export type CameraMode = 'orbit' | 'fpv';
 
 interface SimulationStore {
   status:         SimulationStatus;
@@ -18,6 +19,10 @@ interface SimulationStore {
   costWeights:    CostWeights;
   error:          string | null;
   placementMode:  PlacementMode;
+
+  // ── Camera mode ─────────────────────────────────────────────────────────────
+  /** 'orbit' = top-down OrbitControls  |  'fpv' = mast-mounted first-person view. */
+  cameraMode:     CameraMode;
 
   // ── Scan animation ──────────────────────────────────────────────────────────
   /** Ordered grid-cell IDs returned by A* (when ReturnVisited = true). */
@@ -37,6 +42,7 @@ interface SimulationStore {
   setCostWeights:   (w: Partial<CostWeights>) => void;
   setError:         (e: string | null) => void;
   setPlacementMode: (m: PlacementMode) => void;
+  setCameraMode:    (m: CameraMode) => void;
   setVisitedNodes:  (nodes: number[]) => void;
   setScanProgress:  (idx: number) => void;
   startMissionClock: () => void;
@@ -58,6 +64,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   routeResult:    null,
   roverState:     defaultRover,
   placementMode:  null,
+  cameraMode:     'orbit',
   visitedNodes:   [],
   scanProgress:   0,
   missionStartMs: null,
@@ -78,6 +85,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   setCostWeights:   (w)           => set((s) => ({ costWeights: { ...s.costWeights, ...w } })),
   setError:         (error)       => set({ error }),
   setPlacementMode: (placementMode) => set({ placementMode }),
+  setCameraMode:    (cameraMode)    => set({ cameraMode }),
   setVisitedNodes:  (visitedNodes)  => set({ visitedNodes, scanProgress: 0 }),
   setScanProgress:  (scanProgress)  => set({ scanProgress }),
   startMissionClock: ()             => set((s) => ({
@@ -86,6 +94,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   reset: () => set({
     status: 'idle', routeResult: null,
     roverState: defaultRover, error: null, placementMode: null,
+    cameraMode: 'orbit',
     visitedNodes: [], scanProgress: 0, missionStartMs: null,
   }),
 }));

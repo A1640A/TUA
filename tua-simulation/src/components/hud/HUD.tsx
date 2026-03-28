@@ -42,15 +42,105 @@ import Compass from './Compass';
 import ApiStatusBadge from './ApiStatusBadge';
 
 export default function HUD() {
-  const status    = useSimulationStore(s => s.status);
-  const obstacles = useObstacleStore(s => s.obstacles);
+  const status     = useSimulationStore(s => s.status);
+  const obstacles  = useObstacleStore(s => s.obstacles);
+  const cameraMode = useSimulationStore(s => s.cameraMode);
+  const setCameraMode = useSimulationStore(s => s.setCameraMode);
 
-  const apiOk     = status !== 'error';
-  const terrainOk = true; // always generated on load
-  const roverOk   = status === 'animating' || status === 'completed';
+  const isFpv    = cameraMode === 'fpv';
+  const apiOk    = status !== 'error';
+  const terrainOk = true;
+  const roverOk  = status === 'animating' || status === 'completed';
 
   return (
     <>
+      {/* ── FPV NASA Visor Overlay ─────────────────────────────────────────── */}
+      <div
+        style={{
+          position: 'absolute', inset: 0,
+          pointerEvents: 'none',
+          opacity: isFpv ? 1 : 0,
+          transition: 'opacity 0.6s ease',
+          zIndex: 5,
+        }}
+      >
+        {/* Radial vignette — darkens edges */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'radial-gradient(ellipse 75% 70% at 50% 52%, transparent 45%, rgba(0,0,0,0.72) 100%)',
+        }} />
+
+        {/* Scanline texture */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'repeating-linear-gradient(0deg, rgba(0,212,255,0.025) 0px, rgba(0,212,255,0.025) 1px, transparent 1px, transparent 3px)',
+          mixBlendMode: 'screen',
+        }} />
+
+        {/* Corner brackets — top-left */}
+        <div style={{ position: 'absolute', top: 18, left: 18, width: 40, height: 40,
+          borderTop: '2px solid rgba(0,212,255,0.6)', borderLeft: '2px solid rgba(0,212,255,0.6)' }} />
+        {/* Corner brackets — top-right */}
+        <div style={{ position: 'absolute', top: 18, right: 18, width: 40, height: 40,
+          borderTop: '2px solid rgba(0,212,255,0.6)', borderRight: '2px solid rgba(0,212,255,0.6)' }} />
+        {/* Corner brackets — bottom-left */}
+        <div style={{ position: 'absolute', bottom: 18, left: 18, width: 40, height: 40,
+          borderBottom: '2px solid rgba(0,212,255,0.6)', borderLeft: '2px solid rgba(0,212,255,0.6)' }} />
+        {/* Corner brackets — bottom-right */}
+        <div style={{ position: 'absolute', bottom: 18, right: 18, width: 40, height: 40,
+          borderBottom: '2px solid rgba(0,212,255,0.6)', borderRight: '2px solid rgba(0,212,255,0.6)' }} />
+
+        {/* FPV label banner — top-center */}
+        <div style={{
+          position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '4px 14px',
+          background: 'rgba(0,212,255,0.07)',
+          border: '1px solid rgba(0,212,255,0.35)',
+          borderRadius: 4,
+          backdropFilter: 'blur(4px)',
+        }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: '#00d4ff',
+            boxShadow: '0 0 8px #00d4ff',
+            display: 'inline-block',
+            animation: 'pulse 1.5s ease-in-out infinite',
+          }} />
+          <span style={{
+            fontFamily: 'monospace', fontSize: 9, letterSpacing: '0.22em',
+            color: 'rgba(0,212,255,0.85)', textTransform: 'uppercase',
+          }}>
+            FPV — ARAÇ KAMERASİ AKTİF
+          </span>
+        </div>
+
+        {/* Crosshair — center */}
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+          <div style={{
+            width: 20, height: 20,
+            border: '1px solid rgba(0,212,255,0.4)',
+            borderRadius: '50%',
+          }} />
+          <div style={{
+            position: 'absolute', top: '50%', left: -8, width: 6, height: 1,
+            background: 'rgba(0,212,255,0.5)', transform: 'translateY(-50%)',
+          }} />
+          <div style={{
+            position: 'absolute', top: '50%', right: -8, width: 6, height: 1,
+            background: 'rgba(0,212,255,0.5)', transform: 'translateY(-50%)',
+          }} />
+          <div style={{
+            position: 'absolute', left: '50%', top: -8, width: 1, height: 6,
+            background: 'rgba(0,212,255,0.5)', transform: 'translateX(-50%)',
+          }} />
+          <div style={{
+            position: 'absolute', left: '50%', bottom: -8, width: 1, height: 6,
+            background: 'rgba(0,212,255,0.5)', transform: 'translateX(-50%)',
+          }} />
+        </div>
+      </div>
+
       {/* ── Top Full-Width Header Bar ──────────────────────────────────────── */}
       <div
         className="absolute top-0 left-0 right-0 flex items-center justify-between px-5 py-2.5 select-none"
@@ -107,6 +197,65 @@ export default function HUD() {
             A* · 8-Yön · Öklid · Dinamik
           </span>
         </div>
+      </div>
+
+      {/* ── Camera Mode Toggle — Bottom Center ───────────────────────────── */}
+      <div
+        className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-auto"
+        style={{ zIndex: 20 }}
+      >
+        <button
+          id="camera-mode-toggle"
+          onClick={() => setCameraMode(isFpv ? 'orbit' : 'fpv')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '7px 18px',
+            borderRadius: 6,
+            border: isFpv
+              ? '1px solid rgba(0,212,255,0.7)'
+              : '1px solid rgba(0,212,255,0.25)',
+            background: isFpv
+              ? 'rgba(0,212,255,0.14)'
+              : 'rgba(0,212,255,0.05)',
+            boxShadow: isFpv
+              ? '0 0 22px rgba(0,212,255,0.3), inset 0 0 12px rgba(0,212,255,0.06)'
+              : '0 0 10px rgba(0,212,255,0.08)',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          {/* Camera icon  */}
+          <svg
+            width="13" height="10" viewBox="0 0 13 10" fill="none"
+            style={{ opacity: isFpv ? 1 : 0.55, transition: 'opacity 0.3s ease' }}
+          >
+            <rect x="0.5" y="2.5" width="9" height="7" rx="1" stroke="#00d4ff" strokeWidth="1" />
+            <path d="M9.5 5.5L12.5 3.5V8.5L9.5 6.5" stroke="#00d4ff" strokeWidth="1" />
+            <circle cx="5" cy="6" r="1.5" fill="#00d4ff" opacity="0.7" />
+          </svg>
+          <span style={{
+            fontFamily: 'monospace',
+            fontSize: 9,
+            letterSpacing: '0.2em',
+            textTransform: 'uppercase',
+            color: isFpv ? 'rgba(0,212,255,1)' : 'rgba(0,212,255,0.6)',
+            fontWeight: 600,
+            transition: 'color 0.3s ease',
+            whiteSpace: 'nowrap',
+          }}>
+            {isFpv ? 'KAMERA: ARAÇ İÇİ' : 'KAMERA: YÖRÜNGE'}
+          </span>
+          {/* Active indicator dot */}
+          {isFpv && (
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: '#00d4ff',
+              boxShadow: '0 0 6px #00d4ff',
+              flexShrink: 0,
+            }} />
+          )}
+        </button>
       </div>
 
       {/* ── Scan status overlay banner ────────────────────────────────────── */}
