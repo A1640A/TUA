@@ -2,6 +2,7 @@
 import { Suspense, useRef, Component, type ReactNode } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
 import { CAMERA_INITIAL_POSITION, CAMERA_FOV } from '@/lib/constants';
 import { useSimulationStore } from '@/store/simulationStore';
@@ -42,7 +43,7 @@ class PostProcessingErrorBoundary extends Component<
   }
 }
 
-// ─── Stable GL config (never changes → no HMR renderer recreations) ──────────
+// ─── Stable GL config ─────────────────────────────────────────────────────────
 const GL_CONFIG: THREE.WebGLRendererParameters = {
   antialias:       true,
   powerPreference: 'high-performance',
@@ -54,6 +55,20 @@ const GL_CONFIG: THREE.WebGLRendererParameters = {
 // ─── Scene Content ────────────────────────────────────────────────────────────
 function SceneContent() {
   const terrainRef = useRef<MoonTerrainHandle>(null);
+
+  /**
+   * OrbitControls ref — passed to CameraManager so it can:
+   *   • Call saveState() right before entering FPV (preserves orbit pose)
+   *   • Force enabled=false imperatively during FPV to kill the damping loop
+   *   • Call reset() + re-enable when returning to orbit
+   *
+   * NOTE: makeDefault is intentionally REMOVED from OrbitControls.
+   * makeDefault registers OrbitControls as the R3F default controls, which
+   * causes it to call update() every frame regardless of the `enabled` prop —
+   * this overwrites camera.quaternion written by CameraManager in FPV mode.
+   * Without makeDefault the orbit loop only runs when enabled=true.
+   */
+  const orbitRef = useRef<OrbitControlsImpl>(null);
 
   const curve = useRouteCurve();
   useRoverAnimation(curve);
@@ -77,10 +92,10 @@ function SceneContent() {
       <Waypoints />
       <DustParticles />
       <ScanOverlay />
-      <CameraManager />
+      <CameraManager orbitRef={orbitRef} />
       <OrbitControls
-        makeDefault
-        enabled={isOrbit}
+        ref={orbitRef}
+        enabled={isOrbit && !placing}
         minDistance={6}
         maxDistance={100}
         maxPolarAngle={Math.PI / 2.1}
@@ -89,9 +104,8 @@ function SceneContent() {
         enableZoom={isOrbit}
         dampingFactor={0.08}
         enableDamping
+        regress
       />
-      {/* AdaptiveDpr WITHOUT pixelated — the pixelated prop was the main
-          cause of the blocky pixel grid visible on the whole canvas. */}
     </>
   );
 }
