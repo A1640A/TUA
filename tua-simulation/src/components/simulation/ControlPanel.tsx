@@ -5,27 +5,27 @@ import Badge from '@/components/ui/Badge';
 import CostWeightSliders from './CostWeightSliders';
 import { useSimulation } from '@/hooks/useSimulation';
 import { useTerrainStore } from '@/store/terrainStore';
-import { RefreshCw, Play, RotateCcw, MapPin } from 'lucide-react';
-import { GRID_SIZE } from '@/lib/constants';
+import { useSimulationStore } from '@/store/simulationStore';
+import { RefreshCw, Play, RotateCcw, Navigation, Flag } from 'lucide-react';
 
 export default function ControlPanel() {
   const {
     status, waypoints, error,
     startSimulation, regenerateTerrain, reset,
-    setStart, setEnd,
   } = useSimulation();
 
+  const placementMode    = useSimulationStore(s => s.placementMode);
+  const setPlacementMode = useSimulationStore(s => s.setPlacementMode);
   const seed = useTerrainStore(s => s.config.seed);
+
   const startWp = waypoints.find(w => w.type === 'start');
   const endWp   = waypoints.find(w => w.type === 'end');
 
   const startCoords = startWp ? `(${startWp.grid.x}, ${startWp.grid.z})` : '—';
   const endCoords   = endWp   ? `(${endWp.grid.x}, ${endWp.grid.z})`     : '—';
 
-  const setDefaultWaypoints = () => {
-    setStart({ x: 12,             z: 12 });
-    setEnd(  { x: GRID_SIZE - 12, z: GRID_SIZE - 12 });
-  };
+  const toggleMode = (mode: 'start' | 'end') =>
+    setPlacementMode(placementMode === mode ? null : mode);
 
   return (
     <div className="flex flex-col gap-3 w-72">
@@ -57,9 +57,38 @@ export default function ControlPanel() {
             <span className="font-mono text-white/80">{endCoords}</span>
           </div>
         </div>
-        <Button variant="ghost" size="sm" className="w-full" onClick={setDefaultWaypoints}>
-          <MapPin size={12} /> Varsayılan Noktaları Ayarla
-        </Button>
+
+        {/* Placement mode toggle buttons */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => toggleMode('start')}
+            className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg border transition-all ${
+              placementMode === 'start'
+                ? 'bg-green-500/25 border-green-500/70 text-green-300 shadow-[0_0_12px_rgba(34,197,94,0.3)]'
+                : 'bg-white/5 border-white/10 text-white/50 hover:bg-green-500/10 hover:border-green-500/30 hover:text-green-400'
+            }`}
+          >
+            <Navigation size={11} />
+            Başlangıç
+          </button>
+          <button
+            onClick={() => toggleMode('end')}
+            className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg border transition-all ${
+              placementMode === 'end'
+                ? 'bg-red-500/25 border-red-500/70 text-red-300 shadow-[0_0_12px_rgba(239,68,68,0.3)]'
+                : 'bg-white/5 border-white/10 text-white/50 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400'
+            }`}
+          >
+            <Flag size={11} />
+            Bitiş
+          </button>
+        </div>
+
+        {placementMode && (
+          <p className="mt-2 text-[10px] text-white/40 text-center animate-pulse">
+            {placementMode === 'start' ? '🟢' : '🔴'} Haritaya tıklayarak {placementMode === 'start' ? 'başlangıç' : 'bitiş'} noktasını belirleyin
+          </p>
+        )}
       </Panel>
 
       {/* Cost Weights */}

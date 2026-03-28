@@ -1,10 +1,11 @@
-﻿'use client';
+'use client';
 import { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, AdaptiveDpr } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CAMERA_INITIAL_POSITION, CAMERA_FOV } from '@/lib/constants';
+import { useSimulationStore } from '@/store/simulationStore';
 
 import Lighting       from './environment/Lighting';
 import StarField      from './environment/StarField';
@@ -24,6 +25,8 @@ function SceneContent() {
   const curve = useRouteCurve();
   useRoverAnimation(curve);
   useTerrain();
+  const placementMode = useSimulationStore(s => s.placementMode);
+  const placing = !!placementMode;
 
   return (
     <>
@@ -42,7 +45,9 @@ function SceneContent() {
         minDistance={8}
         maxDistance={90}
         maxPolarAngle={Math.PI / 2.05}
-        enablePan={true}
+        enablePan={!placing}
+        enableRotate={!placing}
+        enableZoom={true}
         dampingFactor={0.08}
         enableDamping
       />
