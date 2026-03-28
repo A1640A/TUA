@@ -1,32 +1,46 @@
 'use client';
 /**
- * CameraManager v4 — Orbit + FPV camera with proper OrbitControls hand-off.
+ * CameraManager v6 — Stabil FPV Kamerası
  *
- * ROOT CAUSE OF BROKEN ORBIT MOUSE CONTROL (v3):
- *   OrbitControls was rendered with `makeDefault`, which registers it as the
- *   R3F default controls and calls controls.update() every frame — even when
- *   `enabled={false}`. This overwrote camera.position / camera.quaternion
- *   written by this component in FPV mode, and ALSO prevented OrbitControls
- *   from responding properly to mouse events in orbit mode because the internal
- *   state machine was being reset by CameraManager's own writes.
+ * ════════════════════════════════════════════════════════════════════
+ *  v5 HATA ANALİZİ
+ * ════════════════════════════════════════════════════════════════════
  *
- * FIX (v4):
- *   1. makeDefault removed from OrbitControls in Scene.tsx.
- *      Without it, OrbitControls only calls update() when enabled=true.
- *   2. CameraManager receives orbitRef and uses it imperatively:
- *      • On switch orbit→FPV: saveState() then enable=false (hard stop).
- *      • On switch FPV→orbit: enable=true then reset() (restore saved pose).
- *      • In FPV useFrame: skip if orbitRef is somehow still enabled.
- *   3. Orbit mode: CameraManager does NOTHING — OrbitControls owns the camera.
- *   4. FPV mode:   OrbitControls is disabled — CameraManager owns the camera.
+ *  SORUN 1 — Euler sırası uyumsuzluğu (ters/yan dönme):
+ *    useRoverAnimation → _euler.setFromQuaternion(smoothQ, 'XYZ')
+ *    CameraManager v5  → _roverEuler.set(r[0], r[1], r[2], 'YXZ')   ← YANLIŞ
+ *    Aynı sayılar farklı sırayla yorumlanınca tamamen farklı bir
+ *    quaternion ortaya çıkıyor → kamera ters/yan dönüyor.
  *
- * FPV behaviour:
- *   - Camera mounts to rover roof (ROOF_LOCAL offset in rover local space).
- *   - Default direction: rover heading + fixed downward PITCH_DEFAULT.
- *   - Left-click drag → yaw (horizontal look-around), max ±180°.
- *   - Release → yaw slowly resets to centre.
- *   - No vertical pitch control: camera always aims at the same elevation.
+ *  SORUN 2 — rotation[1]'i heading olarak kullanmak:
+ *    Terrain eğimi rover'a pitch/roll ekler. XYZ euler decomposition'ında
+ *    bu Y bileşenini kirletir → "heading" artık gerçek azimut değildir →
+ *    kratere girerken kamera önce sağa sonra sola savrulur.
+ *
+ *  SORUN 3 — Kamera terrain tilt'ini kalıtıyor:
+ *    Rover eğilince kamera da eğiliyordu → ufuk titriyor, mide bulandırıcı.
+ *
+ * ════════════════════════════════════════════════════════════════════
+ *  v6 ÇÖZÜM
+ * ════════════════════════════════════════════════════════════════════
+ *
+ *  1. Tam rover quaternion'ını doğru sırayla ('XYZ') yeniden kur.
+ *
+ *  2. Gerçek heading: rover'ın local +Z vektörünü world space'e uygula,
+ *     XZ'ye flatten, normalize → atan2 → saf azimut açısı.
+ *     Bu, terrain tilt'inden bağımsızdır.
+ *
+ *  3. FPV kamerası yalnızca heading + userYaw + userPitch ile kurulur.
+ *     Rover'ın terrain roll/pitch'i kameraya KESINLIKLE geçirilmez.
+ *     Sonuç: sakin, mide bulandırmayan, uçuş simülatörü kalitesinde görüş.
+ *
+ *  4. Sol tık → Pointer Lock. movementX/Y delta ile yaw + pitch.
+ *     Escape / mod değişimi → kilit otomatik açılır.
+ *
+ *  5. FPV'ye girerken smoothCamQuat rover'ın GERÇEK heading'inden başlar
+ *     → ilk kare hedefe doğru bakar.
  */
+
 import { useRef, useEffect, type RefObject } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
@@ -34,53 +48,52 @@ import * as THREE from 'three';
 import { useSimulationStore } from '@/store/simulationStore';
 import { CAMERA_INITIAL_POSITION, CAMERA_FOV } from '@/lib/constants';
 
-// ── Constants ──────────────────────────────────────────────────────────────────
+// ── Sabitler ─────────────────────────────────────────────────────────────────
 
 const FPV_FOV = 72;
 
-/**
- * Camera mount point in rover local space.
- * x=0: centered, y=1.35: above rover roof, z=0: mid fore-aft.
- */
+/** Kamera montaj noktası (rover local space, çatı ortası). */
 const ROOF_LOCAL = new THREE.Vector3(0, 1.35, 0);
 
-/**
- * Fixed downward pitch (radians). -0.18 ≈ -10°: sees ground ahead.
- * Positive → looks up, negative → looks down.
- */
+/** Varsayılan aşağı pitch (radyan). -0.18 ≈ -10°: önü görmek için. */
 const PITCH_DEFAULT = -0.18;
 
-/** Camera position LERP factor per frame. Lower = smoother. */
-const CAM_POS_LERP  = 0.09;
-/** Camera rotation SLERP factor. Slightly slower than rover's own 0.10. */
-const CAM_ROT_SLERP = 0.09;
+/** Konum LERP hızı (kare başına). */
+const CAM_POS_LERP  = 0.10;
+/** Rotasyon SLERP hızı — heading konusunda hızlı, yumuşak görüntü için. */
+const CAM_ROT_SLERP = 0.14;
 
-/** FPV ↔ Orbit transition speed. */
-const TRANSITION_SPD = 0.06;
+/** FPV giriş/çıkış geçiş hızı. */
+const TRANSITION_SPD = 0.07;
 
-/** Mouse horizontal drag sensitivity (radians / pixel). */
-const YAW_SENSITIVITY = 0.006;
-/** Yaw return-to-centre speed (applied each frame while not dragging). */
-const YAW_RESET       = 0.05;
-/** Maximum horizontal look angle (radians). π = full 180° each side. */
-const MAX_YAW         = Math.PI;
+/** Mouse hassasiyeti (radyan / piksel). */
+const LOOK_SENSITIVITY = 0.003;
 
-// ── Zero-GC scratch objects ────────────────────────────────────────────────────
-const _roofWorld   = new THREE.Vector3();
-const _roofOffset  = new THREE.Vector3();
-const _roverEuler  = new THREE.Euler();
-const _roverQuat   = new THREE.Quaternion();
-const _headingQ    = new THREE.Quaternion();
-const _yawQ        = new THREE.Quaternion();
-const _pitchQ      = new THREE.Quaternion();
-const _targetQuat  = new THREE.Quaternion();
-const _worldUp     = new THREE.Vector3(0, 1, 0);
-const _localX      = new THREE.Vector3(1, 0, 0);
+/** Maksimum yatay bakış açısı (radyan). π = ±180°. */
+const MAX_YAW = Math.PI;
 
-// ──────────────────────────────────────────────────────────────────────────────
+/** Maksimum dikey bakış açısı (radyan). ~±75°. */
+const MAX_PITCH = 1.3;
+
+/** Pointer Lock olmadığında bakış resetleme hızı (kare başına). */
+const LOOK_RESET = 0.04;
+
+// ── GC sıfır scratch nesneleri ────────────────────────────────────────────────
+const _roofWorld    = new THREE.Vector3();
+const _roofOffset   = new THREE.Vector3();
+const _roverEuler   = new THREE.Euler(); // 'XYZ' — useRoverAnimation ile eşleşir
+const _roverQuat    = new THREE.Quaternion();
+const _forward      = new THREE.Vector3(); // rover'ın +Z yönü → world XZ'ye flatten
+const _headingQ     = new THREE.Quaternion();
+const _yawQ         = new THREE.Quaternion();
+const _pitchQ       = new THREE.Quaternion();
+const _targetQuat   = new THREE.Quaternion();
+const _worldUp      = new THREE.Vector3(0, 1, 0);
+const _pitchAxis    = new THREE.Vector3(1, 0, 0); // heading+yaw sonrası local X
+
+// ────────────────────────────────────────────────────────────────────────────
 
 interface CameraManagerProps {
-  /** Ref to the OrbitControls instance in Scene — used for hard enable/disable. */
   orbitRef: RefObject<OrbitControlsImpl | null>;
 }
 
@@ -89,108 +102,139 @@ export default function CameraManager({ orbitRef }: CameraManagerProps) {
   const cameraMode = useSimulationStore(s => s.cameraMode);
   const roverState = useSimulationStore(s => s.roverState);
 
-  // ── Transition state ─────────────────────────────────────────────────────────
-  /** Saved camera position at the moment we entered FPV (for returning). */
+  // ── Geçiş durumu ─────────────────────────────────────────────────────────────
   const orbitPosSnap  = useRef(new THREE.Vector3(...CAMERA_INITIAL_POSITION));
-  /** Saved camera quaternion at the moment we entered FPV (for returning). */
   const orbitQuatSnap = useRef(new THREE.Quaternion());
-  /** 0→1 blend progress for FPV entry / exit animation. */
   const transitionT   = useRef(1.0);
   const prevMode      = useRef<'orbit' | 'fpv'>('orbit');
 
-  // ── Smooth camera buffers ────────────────────────────────────────────────────
+  // ── Kamera buffer'ları ───────────────────────────────────────────────────────
   const smoothCamPos  = useRef(new THREE.Vector3(...CAMERA_INITIAL_POSITION));
   const smoothCamQuat = useRef(new THREE.Quaternion());
 
-  // ── FPV yaw state ────────────────────────────────────────────────────────────
-  const yawOffset    = useRef(0);
-  const isDragging   = useRef(false);
-  const prevMouseX   = useRef(0);
+  // ── FPV bakış durumu ─────────────────────────────────────────────────────────
+  const yawOffset     = useRef(0);
+  const pitchOffset   = useRef(PITCH_DEFAULT);
+  const pointerLocked = useRef(false);
 
-  // ── Mouse / touch drag listeners (FPV only) ──────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────────────
+  // Helper: rover'ın gerçek heading radyanını hesapla
+  // Sol +X, İleri +Z modelinde rover'ın world-forward XZ projeksiyonundan atan2
+  // ────────────────────────────────────────────────────────────────────────────
+  const getRoverHeadingRad = (rot: [number, number, number]): number => {
+    // ÖNEMLİ: 'XYZ' sırası — useRoverAnimation'ın extraction sırasıyla eşleşmeli
+    _roverEuler.set(rot[0], rot[1], rot[2], 'XYZ');
+    _roverQuat.setFromEuler(_roverEuler);
+
+    // Rover local forward = +Z → world space
+    _forward.set(0, 0, 1).applyQuaternion(_roverQuat);
+
+    // XZ düzlemine flatten (terrain pitch'ini yoksay)
+    _forward.y = 0;
+    if (_forward.lengthSq() < 0.0001) return 0; // degenerate guard
+    _forward.normalize();
+
+    // atan2(x, z) → Y ekseni etrafında açı (Three.js heading convention)
+    return Math.atan2(_forward.x, _forward.z);
+  };
+
+  // ── Pointer Lock event listener'ları ──────────────────────────────────────────
   useEffect(() => {
     const canvas = gl.domElement;
 
     const onMouseDown = (e: MouseEvent) => {
       if (cameraMode !== 'fpv') return;
-      if (e.button === 0) {
-        isDragging.current = true;
-        prevMouseX.current = e.clientX;
+      if (e.button === 0 && !pointerLocked.current) {
+        canvas.requestPointerLock();
       }
     };
 
     const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current || cameraMode !== 'fpv') return;
-      const dx = e.clientX - prevMouseX.current;
-      prevMouseX.current = e.clientX;
-      yawOffset.current -= dx * YAW_SENSITIVITY;
-      yawOffset.current  = THREE.MathUtils.clamp(yawOffset.current, -MAX_YAW, MAX_YAW);
+      if (cameraMode !== 'fpv' || !pointerLocked.current) return;
+      // movementX: sağa pozitif, sola negatif
+      // movementY: aşağı pozitif, yukarı negatif
+      yawOffset.current   -= e.movementX * LOOK_SENSITIVITY;
+      pitchOffset.current -= e.movementY * LOOK_SENSITIVITY;
+      yawOffset.current   = THREE.MathUtils.clamp(yawOffset.current,   -MAX_YAW,   MAX_YAW);
+      pitchOffset.current = THREE.MathUtils.clamp(pitchOffset.current, -MAX_PITCH, MAX_PITCH);
     };
 
-    const onMouseUp = () => { isDragging.current = false; };
-
-    // Touch support
-    const onTouchStart = (e: TouchEvent) => {
-      if (cameraMode !== 'fpv' || e.touches.length !== 1) return;
-      isDragging.current = true;
-      prevMouseX.current = e.touches[0].clientX;
+    const onPointerLockChange = () => {
+      pointerLocked.current = document.pointerLockElement === canvas;
     };
-    const onTouchMove = (e: TouchEvent) => {
-      if (!isDragging.current || e.touches.length !== 1) return;
-      const dx = e.touches[0].clientX - prevMouseX.current;
-      prevMouseX.current = e.touches[0].clientX;
-      yawOffset.current -= dx * YAW_SENSITIVITY;
-      yawOffset.current  = THREE.MathUtils.clamp(yawOffset.current, -MAX_YAW, MAX_YAW);
+    const onPointerLockError = () => {
+      pointerLocked.current = false;
     };
-    const onTouchEnd = () => { isDragging.current = false; };
 
-    canvas.addEventListener('mousedown',  onMouseDown);
-    window.addEventListener('mousemove',  onMouseMove);
-    window.addEventListener('mouseup',    onMouseUp);
-    canvas.addEventListener('touchstart', onTouchStart, { passive: true });
-    canvas.addEventListener('touchmove',  onTouchMove,  { passive: true });
-    canvas.addEventListener('touchend',   onTouchEnd);
+    canvas.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('pointerlockchange', onPointerLockChange);
+    document.addEventListener('pointerlockerror', onPointerLockError);
 
     return () => {
-      canvas.removeEventListener('mousedown',  onMouseDown);
-      window.removeEventListener('mousemove',  onMouseMove);
-      window.removeEventListener('mouseup',    onMouseUp);
-      canvas.removeEventListener('touchstart', onTouchStart);
-      canvas.removeEventListener('touchmove',  onTouchMove);
-      canvas.removeEventListener('touchend',   onTouchEnd);
+      canvas.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
+      document.removeEventListener('pointerlockerror', onPointerLockError);
     };
   }, [cameraMode, gl.domElement]);
 
-  // ── Mode change handler ───────────────────────────────────────────────────────
+  // ── Mod değişimi ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (cameraMode === prevMode.current) return;
     const orbit = orbitRef.current;
 
     if (cameraMode === 'fpv') {
-      // Capture current orbit camera pose before handing off
+      // Orbit kamera pozisyonu kap
       orbitPosSnap.current.copy(camera.position);
       orbitQuatSnap.current.copy(camera.quaternion);
-      smoothCamPos.current.copy(camera.position);
-      smoothCamQuat.current.copy(camera.quaternion);
-      transitionT.current = 0;
-      yawOffset.current   = 0;
 
-      // Hard-disable OrbitControls so its damping loop stops writing to camera
+      // ─ smoothCamQuat'ı rover'ın GERÇEK heading'inden başlat ──────────
+      // Bu, FPV'ye geçer geçmez kameranın hedefe bakmasını sağlar.
+      // Rover'ın terrain-contaminated rotation yerine, temiz heading kullan.
+      const headingRad = getRoverHeadingRad(roverState.rotation as [number, number, number]);
+      _headingQ.setFromAxisAngle(_worldUp, headingRad);
+
+      // Varsayılan pitch ekle (aşağı bak)
+      _pitchAxis.set(1, 0, 0).applyQuaternion(_headingQ);
+      _pitchQ.setFromAxisAngle(_pitchAxis, PITCH_DEFAULT);
+      const initialQuat = _headingQ.clone().multiply(_pitchQ);
+
+      // Rover çatı pozisyonunu hesapla
+      _roverEuler.set(roverState.rotation[0], roverState.rotation[1], roverState.rotation[2], 'XYZ');
+      _roverQuat.setFromEuler(_roverEuler);
+      _roofOffset.copy(ROOF_LOCAL).applyQuaternion(_roverQuat);
+      const initRoofPos = new THREE.Vector3(
+        roverState.position[0],
+        roverState.position[1],
+        roverState.position[2],
+      ).add(_roofOffset);
+
+      smoothCamPos.current.copy(initRoofPos);
+      smoothCamQuat.current.copy(initialQuat); // ← DOĞRU hedef yönü
+
+      transitionT.current  = 0;
+      yawOffset.current    = 0;
+      pitchOffset.current  = PITCH_DEFAULT;
+
       if (orbit) {
         orbit.saveState();
         orbit.enabled = false;
       }
-    } else {
-      // orbit mode
-      isDragging.current  = false;
-      yawOffset.current   = 0;
-      transitionT.current = 0;
 
-      // Re-enable OrbitControls and restore the saved pose
+    } else {
+      // Pointer lock'u kapat
+      if (document.pointerLockElement === gl.domElement) {
+        document.exitPointerLock();
+      }
+      pointerLocked.current = false;
+      yawOffset.current     = 0;
+      pitchOffset.current   = PITCH_DEFAULT;
+      transitionT.current   = 0;
+
       if (orbit) {
         orbit.enabled = true;
         orbit.reset();
-        // Restore the camera to where the user left it before FPV
         camera.position.copy(orbitPosSnap.current);
         camera.quaternion.copy(orbitQuatSnap.current);
         orbit.update();
@@ -198,19 +242,28 @@ export default function CameraManager({ orbitRef }: CameraManagerProps) {
     }
 
     prevMode.current = cameraMode;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraMode, camera, orbitRef]);
 
-  // ── Per-frame update ──────────────────────────────────────────────────────────
+  // Unmount'ta pointer lock'u kapat
+  useEffect(() => {
+    return () => {
+      if (document.pointerLockElement === gl.domElement) {
+        document.exitPointerLock();
+      }
+    };
+  }, [gl.domElement]);
+
+  // ── Her kare güncelleme ──────────────────────────────────────────────────────
   useFrame(() => {
-    // In orbit mode: OrbitControls owns the camera, nothing to do here.
     if (cameraMode === 'orbit') return;
 
-    // ── Rover roof position in world space ─────────────────────────────────────
+    // ─ Çatı pozisyonu ('XYZ' — doğru sıra) ──────────────────────────────────
     _roverEuler.set(
       roverState.rotation[0],
       roverState.rotation[1],
       roverState.rotation[2],
-      'YXZ',
+      'XYZ', // ← useRoverAnimation extraction sırası ile eşleşmeli
     );
     _roverQuat.setFromEuler(_roverEuler);
 
@@ -221,37 +274,58 @@ export default function CameraManager({ orbitRef }: CameraManagerProps) {
       roverState.position[2],
     ).add(_roofOffset);
 
-    // ── FPV camera orientation ─────────────────────────────────────────────────
-    // Advance transition blend
+    // ─ Geçiş ilerlet ─────────────────────────────────────────────────────────
     if (transitionT.current < 1.0) {
       transitionT.current = Math.min(transitionT.current + TRANSITION_SPD, 1.0);
     }
 
-    // Yaw auto-reset when not dragging
-    if (!isDragging.current && Math.abs(yawOffset.current) > 0.0002) {
-      yawOffset.current *= (1 - YAW_RESET);
-    } else if (!isDragging.current) {
-      yawOffset.current = 0;
+    // ─ Pointer Lock yoksa yaw/pitch yavaşça sıfırla ───────────────────────────
+    if (!pointerLocked.current) {
+      yawOffset.current   *= (1 - LOOK_RESET);
+      pitchOffset.current += (PITCH_DEFAULT - pitchOffset.current) * LOOK_RESET;
+      if (Math.abs(yawOffset.current) < 0.0002) yawOffset.current = 0;
+      if (Math.abs(pitchOffset.current - PITCH_DEFAULT) < 0.001) {
+        pitchOffset.current = PITCH_DEFAULT;
+      }
     }
 
-    // Step 1: pure heading yaw (rover's Y-axis rotation only, no pitch/roll)
-    _headingQ.setFromAxisAngle(_worldUp, roverState.rotation[1]);
+    // ─ FPV kamera yönelimi ───────────────────────────────────────────────────
+    //
+    // TEMEL PRENSİP: Kamera terrain roll/pitch'ini KESINLIKLE miras almaz.
+    // Sadece 3 bağımsız rotasyon katmanı var:
+    //   1. heading   — rover'ın XZ forward'ından elde edilir (saf azimut)
+    //   2. yawOffset — kullanıcı sol/sağ mouse
+    //   3. pitchOffset — kullanıcı yukarı/aşağı mouse
+    //
+    // Bu sayede rover kratere girip eğilse bile ufuk sabit kalır.
 
-    // Step 2: user yaw offset (world Y, stacks on top of heading)
+    // Adım 1: Saf heading (terrain-independent)
+    const headingRad = getRoverHeadingRad(roverState.rotation as [number, number, number]);
+    _headingQ.setFromAxisAngle(_worldUp, headingRad);
+
+    // Adım 2: Kullanıcı yaw, world Y ekseni üzerinde
     _yawQ.setFromAxisAngle(_worldUp, yawOffset.current);
 
-    // Step 3: fixed downward pitch (rover's local X axis after heading applied)
-    _localX.set(1, 0, 0).applyQuaternion(_headingQ);
-    _pitchQ.setFromAxisAngle(_localX, PITCH_DEFAULT);
+    // Adım 3: heading + yaw bileşiğini kur, ardından local X'i bul
+    _targetQuat.copy(_headingQ).multiply(_yawQ);
+    _pitchAxis.set(1, 0, 0).applyQuaternion(_targetQuat); // local X
 
-    // Compose: heading × yaw × pitch
-    _targetQuat.copy(_headingQ).multiply(_yawQ).multiply(_pitchQ);
+    // Adım 4: Pitch (dikey bakış)
+    _pitchQ.setFromAxisAngle(_pitchAxis, pitchOffset.current);
 
-    // ── LERP / SLERP camera buffers ────────────────────────────────────────────
+    // Sonuç: heading × yaw × pitch
+    _targetQuat.multiply(_pitchQ);
+
+    // ─ LERP / SLERP buffer'ları ───────────────────────────────────────────────
     smoothCamPos.current.lerp(_roofWorld, CAM_POS_LERP);
+
+    // Shortest-arc slerp
+    if (smoothCamQuat.current.dot(_targetQuat) < 0) {
+      _targetQuat.set(-_targetQuat.x, -_targetQuat.y, -_targetQuat.z, -_targetQuat.w);
+    }
     smoothCamQuat.current.slerp(_targetQuat, CAM_ROT_SLERP);
 
-    // ── Apply to camera (with transition blend) ────────────────────────────────
+    // ─ Kameraya uygula (giriş animasyonu ile) ────────────────────────────────
     const alpha = easeInOutCubic(transitionT.current);
     if (transitionT.current >= 1.0) {
       camera.position.copy(smoothCamPos.current);
@@ -261,7 +335,7 @@ export default function CameraManager({ orbitRef }: CameraManagerProps) {
       camera.quaternion.slerpQuaternions(orbitQuatSnap.current, smoothCamQuat.current, alpha);
     }
 
-    // ── FOV transition ─────────────────────────────────────────────────────────
+    // ─ FOV geçişi ────────────────────────────────────────────────────────────
     const camP = camera as THREE.PerspectiveCamera;
     if (Math.abs(camP.fov - FPV_FOV) > 0.05) {
       camP.fov = THREE.MathUtils.lerp(camP.fov, FPV_FOV, TRANSITION_SPD * 2);

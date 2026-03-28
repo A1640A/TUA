@@ -5,7 +5,8 @@ import { ThreeEvent, useLoader } from '@react-three/fiber';
 import { useTerrainStore } from '@/store/terrainStore';
 import { useSimulationStore } from '@/store/simulationStore';
 import { useObstacleStore } from '@/store/obstacleStore';
-import { TERRAIN_SCALE, TERRAIN_HEIGHT_SCALE, GRID_SIZE } from '@/lib/constants';
+import { TERRAIN_SCALE, GRID_SIZE } from '@/lib/constants';
+import { getHeightAt } from '@/lib/terrainSampler';
 
 /**
  * MoonTerrain v3 — Single source of truth for both visuals and navigation.
@@ -60,38 +61,18 @@ export const TERRAIN_GROUND_OFFSET = 0.28;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Bilinear heightMap sample at world (wx, wz). Returns normalised 0..1. */
-function sampleHeightNorm(
-  heightMap: Float32Array | readonly number[],
-  wx: number, wz: number,
-): number {
-  const halfS = TERRAIN_SCALE / 2;
-  const u  = Math.max(0, Math.min(1, (wx + halfS) / TERRAIN_SCALE));
-  const v  = Math.max(0, Math.min(1, (wz + halfS) / TERRAIN_SCALE));
-  const gx = u * (GRID_SIZE - 1);
-  const gz = v * (GRID_SIZE - 1);
-  const x0 = Math.floor(gx), x1 = Math.min(x0 + 1, GRID_SIZE - 1);
-  const z0 = Math.floor(gz), z1 = Math.min(z0 + 1, GRID_SIZE - 1);
-  const fx = gx - x0, fz = gz - z0;
-  const h00 = heightMap[z0 * GRID_SIZE + x0] ?? 0;
-  const h10 = heightMap[z0 * GRID_SIZE + x1] ?? 0;
-  const h01 = heightMap[z1 * GRID_SIZE + x0] ?? 0;
-  const h11 = heightMap[z1 * GRID_SIZE + x1] ?? 0;
-  return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz;
-}
-
-/** Sphere-curvature dip at horizontal distance r from centre. */
-function sphereDip(wx: number, wz: number): number {
-  const r2 = wx * wx + wz * wz;
-  return -(SPHERE_RADIUS - Math.sqrt(Math.max(0, SPHERE_RADIUS * SPHERE_RADIUS - r2)));
-}
-
-/** Full world-Y for a given (wx, wz): procedural height + sphere curvature. */
+/**
+ * getWorldY — backward-compatibility alias for getHeightAt.
+ *
+ * All height sampling is now delegated to terrainSampler.ts which is the
+ * single source of truth.  Any code that still imports getWorldY from here
+ * will continue to work without modification.
+ */
 export function getWorldY(
   heightMap: Float32Array | readonly number[],
   wx: number, wz: number,
 ): number {
-  return sampleHeightNorm(heightMap, wx, wz) * TERRAIN_HEIGHT_SCALE + sphereDip(wx, wz);
+  return getHeightAt(heightMap, wx, wz);
 }
 
 // ─── Ref handle ────────────────────────────────────────────────────────────────
@@ -176,8 +157,8 @@ const MoonTerrain = forwardRef<MoonTerrainHandle>(function MoonTerrain(_props, f
       const wx = (u - 0.5) * TERRAIN_SCALE;
       const wz = (0.5 - v) * TERRAIN_SCALE;
 
-      // Bake vertex Y from heightMap + sphere curvature
-      const wy = getWorldY(terrain.heightMap, wx, wz);
+      // Bake vertex Y via terrainSampler.getHeightAt (single source of truth)
+      const wy = getHeightAt(terrain.heightMap, wx, wz);
       pos.setY(i, wy);
 
       // Grid sample indices
@@ -225,7 +206,7 @@ const MoonTerrain = forwardRef<MoonTerrainHandle>(function MoonTerrain(_props, f
   useImperativeHandle(fwdRef, () => ({
     getTerrainHeight(wx: number, wz: number): number {
       if (!terrain?.heightMap) return 0;
-      return getWorldY(terrain.heightMap, wx, wz);
+      return getHeightAt(terrain.heightMap, wx, wz);
     },
   }), [terrain]);
 

@@ -24,7 +24,7 @@ import * as THREE from 'three';
 import { useSimulationStore } from '@/store/simulationStore';
 import { useTerrainStore } from '@/store/terrainStore';
 import { routePointsToVectors } from '@/hooks/useRoverAnimation';
-import { getWorldY } from '@/canvas/terrain/MoonTerrain';
+import { getHeightAt } from '@/lib/terrainSampler';
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ function trackY(
   wz: number,
 ): number {
   if (!hm) return TRACK_Y_LIFT;
-  return getWorldY(hm, wx, wz) + TRACK_Y_LIFT;
+  return getHeightAt(hm, wx, wz) + TRACK_Y_LIFT;
 }
 
 /**
@@ -307,7 +307,7 @@ export default function WheelTracks() {
     // Re-snap every point directly to terrain Y (no ROUTE_Y_LIFT — tracks sit on ground)
     const snapped = slice.map(v => new THREE.Vector3(
       v.x,
-      hm ? getWorldY(hm, v.x, v.z) + TRACK_Y_LIFT : v.y,
+      hm ? getHeightAt(hm, v.x, v.z) + TRACK_Y_LIFT : v.y,
       v.z,
     ));
 
