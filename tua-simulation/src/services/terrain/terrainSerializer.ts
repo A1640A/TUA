@@ -21,7 +21,10 @@ function expandObstacle(
   variant:   Obstacle['variant'],
   gridSize:  number,
 ): { x: number; z: number }[] {
-  const radius = variant === 'boulder-lg' || variant === 'crater' ? 2 : 1;
+  // lg boulders and craters need a wider 2-cell diamond to ensure even
+  // diagonal movement can't clip through their wide visual footprints.
+  // All other variants use a 1-cell diamond (5 cells total).
+  const radius = (variant === 'boulder-lg' || variant === 'crater') ? 2 : 1;
   const cells: { x: number; z: number }[] = [];
 
   for (let dz = -radius; dz <= radius; dz++) {

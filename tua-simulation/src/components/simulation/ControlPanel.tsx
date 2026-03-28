@@ -7,7 +7,25 @@ import { useSimulation } from '@/hooks/useSimulation';
 import { useTerrainStore } from '@/store/terrainStore';
 import { useSimulationStore } from '@/store/simulationStore';
 import { useObstacleStore } from '@/store/obstacleStore';
-import { RefreshCw, Play, RotateCcw, Navigation, Flag, AlertTriangle, Trash2 } from 'lucide-react';
+import type { Obstacle } from '@/types/simulation.types';
+import { RefreshCw, Play, RotateCcw, Navigation, Flag, Trash2, MousePointerClick } from 'lucide-react';
+
+// ── Obstacle palette definition ───────────────────────────────────────────────
+const OBSTACLE_PALETTE: {
+  variant:  Obstacle['variant'];
+  label:    string;
+  emoji:    string;
+  desc:     string;
+  color:    string;
+  selected: string;
+}[] = [
+  { variant: 'boulder-sm',  label: 'Küçük Taş',   emoji: '🪨', desc: 'Küçük keskin kaya',       color: 'hover:border-stone-400/40  hover:bg-stone-400/10  hover:text-stone-200',  selected: 'border-stone-400/70  bg-stone-400/20  text-stone-200' },
+  { variant: 'boulder-md',  label: 'Orta Kaya',   emoji: '🗿', desc: 'Orta boy kayalık',        color: 'hover:border-amber-500/40  hover:bg-amber-500/10  hover:text-amber-200',  selected: 'border-amber-500/70  bg-amber-500/20  text-amber-200' },
+  { variant: 'boulder-lg',  label: 'Büyük Kaya',  emoji: '⛰️', desc: 'Büyük kaya kütlesi',      color: 'hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-200', selected: 'border-orange-500/70 bg-orange-500/20 text-orange-200' },
+  { variant: 'crater',      label: 'Krater',      emoji: '⭕', desc: 'Çarpma krateri',          color: 'hover:border-red-500/40    hover:bg-red-500/10    hover:text-red-200',    selected: 'border-red-500/70    bg-red-500/20    text-red-200' },
+  { variant: 'dust-mound',  label: 'Toz Tepesi',  emoji: '🏔️', desc: 'Regolith tümsek',        color: 'hover:border-yellow-500/40 hover:bg-yellow-500/10 hover:text-yellow-200', selected: 'border-yellow-500/70 bg-yellow-500/20 text-yellow-200' },
+  { variant: 'antenna',     label: 'Enkaz',       emoji: '📡', desc: 'Çökmüş uydu enkazı',     color: 'hover:border-cyan-500/40   hover:bg-cyan-500/10   hover:text-cyan-200',   selected: 'border-cyan-500/70   bg-cyan-500/20   text-cyan-200' },
+];
 
 /**
  * Left-side control panel providing:
@@ -31,6 +49,8 @@ export default function ControlPanel() {
   const setPlacingObstacle = useObstacleStore(s => s.setPlacingObstacle);
   const obstacles          = useObstacleStore(s => s.obstacles);
   const clearObstacles     = useObstacleStore(s => s.clearObstacles);
+  const selectedVariant    = useObstacleStore(s => s.selectedVariant);
+  const setSelectedVariant = useObstacleStore(s => s.setSelectedVariant);
 
   const startWp = waypoints.find(w => w.type === 'start');
   const endWp   = waypoints.find(w => w.type === 'end');
@@ -43,6 +63,12 @@ export default function ControlPanel() {
 
   const toggleObstaclePlacing = () => {
     setPlacingObstacle(!placingObstacle);
+    setPlacementMode(null);
+  };
+
+  const selectAndPlace = (variant: Obstacle['variant']) => {
+    setSelectedVariant(variant);
+    setPlacingObstacle(true);
     setPlacementMode(null);
   };
 
@@ -112,8 +138,32 @@ export default function ControlPanel() {
         )}
       </Panel>
 
-      {/* ── Obstacle Management ──────────────────────────────────────────── */}
+      {/* ── Obstacle Palette ──────────────────────────────────────────────── */}
       <Panel title="Dinamik Engeller">
+        {/* 3×2 variant grid */}
+        <div className="grid grid-cols-3 gap-1.5 mb-3">
+          {OBSTACLE_PALETTE.map(({ variant, label, emoji, desc, color, selected }) => {
+            const isSelected = selectedVariant === variant;
+            return (
+              <button
+                key={variant}
+                title={desc}
+                onClick={() => setSelectedVariant(variant)}
+                className={[
+                  'flex flex-col items-center gap-1 py-2 px-1 rounded-lg border text-center transition-all duration-150',
+                  'bg-white/3',
+                  isSelected ? selected : `border-white/10 text-white/40 ${color}`,
+                  isSelected ? 'shadow-[0_0_10px_rgba(255,255,255,0.08)]' : '',
+                ].join(' ')}
+              >
+                <span className="text-lg leading-none">{emoji}</span>
+                <span className="text-[9px] font-mono font-semibold leading-tight">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Place + Clear row */}
         <div className="flex gap-2 mb-2">
           <button
             onClick={toggleObstaclePlacing}
@@ -123,8 +173,8 @@ export default function ControlPanel() {
                 : 'bg-white/4 border-white/10 text-white/50 hover:bg-orange-500/10 hover:border-orange-500/30 hover:text-orange-400'
             }`}
           >
-            <AlertTriangle size={11} />
-            {placingObstacle ? 'Haritaya Tıkla' : 'Engel Ekle'}
+            <MousePointerClick size={11} />
+            {placingObstacle ? 'Haritaya tıkla…' : 'Yerleştir'}
           </button>
           <button
             onClick={clearObstacles}
@@ -136,6 +186,7 @@ export default function ControlPanel() {
           </button>
         </div>
 
+        {/* Status row */}
         <div className="flex items-center gap-2">
           <div className={`w-1.5 h-1.5 rounded-full ${obstacles.length > 0 ? 'bg-orange-400 animate-pulse' : 'bg-white/20'}`} />
           <span className="text-[10px] font-mono text-white/40">
@@ -145,7 +196,20 @@ export default function ControlPanel() {
             <span className="text-[9px] text-white/25 ml-auto">Sağ tık → kaldır</span>
           )}
         </div>
+
+        {/* Placement hint */}
+        {placingObstacle && (
+          <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-orange-500/20 bg-orange-500/5">
+            <span className="text-lg leading-none">
+              {OBSTACLE_PALETTE.find(p => p.variant === selectedVariant)?.emoji}
+            </span>
+            <p className="text-[10px] text-orange-300/70 font-mono">
+              {OBSTACLE_PALETTE.find(p => p.variant === selectedVariant)?.label} seçildi — haritaya tıkla
+            </p>
+          </div>
+        )}
       </Panel>
+
 
       {/* ── A* Cost Weights ──────────────────────────────────────────────── */}
       <Panel title="A* Maliyet Ağırlıkları">

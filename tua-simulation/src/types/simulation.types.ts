@@ -60,8 +60,20 @@ export interface Obstacle {
   id:   string;
   /** Grid cell this obstacle occupies. */
   grid: GridNode;
-  /** Obstacle visual variant. */
-  variant: 'boulder-sm' | 'boulder-md' | 'boulder-lg' | 'crater';
+  /**
+   * Obstacle visual variant — determines both the 3D mesh rendered and the
+   * A* blocker radius applied in terrainSerializer.
+   *
+   * | Variant        | Blocker radius | Description                     |
+   * |----------------|----------------|---------------------------------|
+   * | boulder-sm     | 1 (diamond)    | Small sharp-edged lunar rock    |
+   * | boulder-md     | 1 (diamond)    | Medium irregular boulder        |
+   * | boulder-lg     | 2 (diamond)    | Large boulder formation         |
+   * | crater         | 2 (diamond)    | Impact crater — wide danger zone|
+   * | dust-mound     | 1 (diamond)    | Soft regolith mound             |
+   * | antenna        | 1 (diamond)    | Crashed probe/antenna debris    |
+   */
+  variant: 'boulder-sm' | 'boulder-md' | 'boulder-lg' | 'crater' | 'dust-mound' | 'antenna';
   /** World-space position (derived from grid at placement time). */
   worldPos: [number, number, number];
 }

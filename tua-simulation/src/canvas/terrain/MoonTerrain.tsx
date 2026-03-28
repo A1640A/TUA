@@ -18,8 +18,9 @@ export default function MoonTerrain() {
   const terrain = useTerrainStore(s => s.terrain);
   const placementMode    = useSimulationStore(s => s.placementMode);
   const setWaypoint      = useSimulationStore(s => s.setWaypoint);
-  const placingObstacle  = useObstacleStore(s => s.placingObstacle);
-  const addObstacle      = useObstacleStore(s => s.addObstacle);
+  const placingObstacle    = useObstacleStore(s => s.placingObstacle);
+  const addObstacle        = useObstacleStore(s => s.addObstacle);
+  const selectedVariant    = useObstacleStore(s => s.selectedVariant);
   const setPlacingObstacle = useObstacleStore(s => s.setPlacingObstacle);
 
   const geometry = useMemo(() => {
@@ -77,11 +78,11 @@ export default function MoonTerrain() {
     if (placementMode) {
       setWaypoint(placementMode, grid);
     } else if (placingObstacle) {
-      addObstacle(grid, 'boulder-md', terrain?.heightMap ?? null);
+      addObstacle(grid, selectedVariant, terrain?.heightMap ?? null);
       setPlacingObstacle(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placementMode, placingObstacle, terrain]);
+  }, [placementMode, placingObstacle, selectedVariant, terrain]);
 
   const crosshair = placementMode || placingObstacle;
 
