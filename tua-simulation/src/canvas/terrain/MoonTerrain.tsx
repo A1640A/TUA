@@ -113,12 +113,13 @@ const MoonTerrain = forwardRef<MoonTerrainHandle>(function MoonTerrain(_props, f
   const meshRef = useRef<THREE.Mesh>(null);
 
   // Store selectors
-  const terrain          = useTerrainStore(s => s.terrain);
-  const placementMode    = useSimulationStore(s => s.placementMode);
-  const setWaypoint      = useSimulationStore(s => s.setWaypoint);
-  const placingObstacle  = useObstacleStore(s => s.placingObstacle);
-  const addObstacle      = useObstacleStore(s => s.addObstacle);
-  const selectedVariant  = useObstacleStore(s => s.selectedVariant);
+  const terrain            = useTerrainStore(s => s.terrain);
+  const deformTerrain      = useTerrainStore(s => s.deformTerrain);
+  const placementMode      = useSimulationStore(s => s.placementMode);
+  const setWaypoint        = useSimulationStore(s => s.setWaypoint);
+  const placingObstacle    = useObstacleStore(s => s.placingObstacle);
+  const addObstacle        = useObstacleStore(s => s.addObstacle);
+  const selectedVariant    = useObstacleStore(s => s.selectedVariant);
   const setPlacingObstacle = useObstacleStore(s => s.setPlacingObstacle);
 
   // ── NASA lunar texture — used as colour/albedo overlay only ───────────────
@@ -235,11 +236,11 @@ const MoonTerrain = forwardRef<MoonTerrainHandle>(function MoonTerrain(_props, f
     if (placementMode) {
       setWaypoint(placementMode, grid);
     } else if (placingObstacle) {
-      addObstacle(grid, selectedVariant, terrain?.heightMap ?? null);
+      addObstacle(grid, selectedVariant, terrain?.heightMap ?? null, deformTerrain);
       setPlacingObstacle(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placementMode, placingObstacle, selectedVariant, terrain]);
+  }, [placementMode, placingObstacle, selectedVariant, terrain, deformTerrain]);
 
   const crosshair = placementMode || placingObstacle;
 

@@ -42,10 +42,10 @@ public class RouteRequest
 
     /// <summary>
     /// Dynamic obstacles placed by the user at runtime.
-    /// Each obstacle completely blocks its grid cell (treated as impassable).
-    /// Supports mid-drive rerouting without modifying the original HeightMap.
+    /// Each entry carries the obstacle type so the A* engine can apply the correct
+    /// per-type clearance kernel (rigid square block vs slope-gated rim zone).
     /// </summary>
-    public List<GridNode> AddedObstacles { get; set; } = [];
+    public List<ObstacleNode> AddedObstacles { get; set; } = [];
 
     /// <summary>
     /// When true, the response will include the <c>VisitedNodes</c> array
@@ -89,4 +89,37 @@ public class GridNode
     /// <summary>Row index in [0, GridSize).</summary>
     [Range(0, 511)]
     public int Z { get; set; }
+}
+
+/// <summary>
+/// An obstacle node sent with a route request, carrying both its grid position
+/// and visual/physical type so the A* engine applies the correct clearance kernel.
+/// </summary>
+/// <remarks>
+/// Clearance kernels (full square, centred on X/Z):
+/// <list type="table">
+///   <item><term>boulder-sm</term><description>1×1 (centre only)</description></item>
+///   <item><term>boulder-md</term><description>3×3 rigid block</description></item>
+///   <item><term>boulder-lg</term><description>7×7 rigid block</description></item>
+///   <item><term>crater</term><description>5×5 hard inner + 2-ring slope-gated rim</description></item>
+///   <item><term>dust-mound</term><description>3×3 hard centre + 2-ring slope-gated rim</description></item>
+///   <item><term>antenna</term><description>5×5 rigid block</description></item>
+/// </list>
+/// </remarks>
+public class ObstacleNode
+{
+    /// <summary>Column index in [0, GridSize).</summary>
+    [Range(0, 511)]
+    public int X { get; set; }
+
+    /// <summary>Row index in [0, GridSize).</summary>
+    [Range(0, 511)]
+    public int Z { get; set; }
+
+    /// <summary>
+    /// Obstacle variant string matching the frontend Obstacle['variant'] union.
+    /// Valid values: "boulder-sm", "boulder-md", "boulder-lg", "crater", "dust-mound", "antenna".
+    /// Defaults to "boulder-md" for backwards compatibility with old payloads.
+    /// </summary>
+    public string ObstacleType { get; set; } = "boulder-md";
 }

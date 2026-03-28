@@ -14,20 +14,23 @@ namespace TuaApi.Algorithms;
 /// <b>Heuristic:</b> Euclidean distance with tie-breaking multiplier (1 + ε) to minimise
 /// redundant equal-cost node expansion on large open grids.
 /// <br/>
-/// <b>Dynamic obstacles:</b> Cells listed in <see cref="RouteRequest.AddedObstacles"/>
-/// are treated as permanently impassable without mutating the caller's HeightMap.
-/// <br/>
+/// <b>Dynamic obstacles (type-aware two-tier clearance):</b>
+/// <list type="bullet">
+///   <item><b>Hard-block set</b> — permanently impassable cells derived from the obstacle's rigid
+///   square kernel (size depends on ObstacleType). Rover cannot enter under any condition.</item>
+///   <item><b>Soft-block set</b> — slope-gated rim cells for craters and dust-mounds. A cell in
+///   this set is only impassable when it is ALSO in the pre-computed slope-impassable set
+///   (i.e. the local terrain gradient there exceeds MaxInclineDeg). Gentle rim edges remain
+///   traversable; cliff-like walls are blocked — letting the algorithm find paths between
+///   the crater rim and the hard inner block.</item>
+/// </list>
 /// <b>Volumetric clearance:</b> Every candidate cell is tested against the rover's
-/// physical footprint (a (2·RoverFootprint+1)² kernel). Any cell whose footprint
-/// overlaps a dynamic obstacle OR whose crater density average exceeds the saturation
-/// threshold is rejected, preventing the rover from clipping through narrow gaps
-/// between craters or boulders.
+/// physical footprint (a (2·RoverFootprint+1)² kernel) against the hard-block set,
+/// preventing the rover from clipping through narrow gaps between boulders.
 /// <br/>
 /// <b>Max-incline filter:</b> Cells where the steepest height gradient across the full
-/// rover footprint perimeter exceeds MaxInclineDeg are pre-marked impassable (like walls),
-/// preventing the rover from attempting lunar cliff traversal.
-/// The perimeter scan samples ALL (2r+1)² - 1 kernel cells — not just the 4 diagonal
-/// corners — ensuring narrow slope ridges are never missed.
+/// rover footprint perimeter exceeds MaxInclineDeg are pre-marked impassable.
+/// The perimeter scan samples ALL (2r+1)² - 1 kernel cells to catch narrow ridges.
 /// <br/>
 /// <b>Complexity:</b> O(n log n) average, where n = GridSize².
 /// </remarks>
@@ -43,6 +46,30 @@ public static class AStarAlgorithm
     /// </summary>
     private const float CraterSaturationThreshold = 0.65f;
 
+    // ── Per-type clearance configuration ─────────────────────────────────────────
+    //
+    // HardRadius: half-side of the rigid square block drawn around the obstacle centre.
+    //   HardRadius 0 → 1×1 (centre only)
+    //   HardRadius 1 → 3×3
+    //   HardRadius 2 → 5×5
+    //   HardRadius 3 → 7×7
+    //
+    // SoftRingWidth: extra ring beyond the hard block that is slope-gated (only blocked
+    //   when the terrain gradient also exceeds MaxInclineDeg at that cell).
+    //   0 → no soft ring (purely hard).
+    //
+    private static (int HardRadius, int SoftRingWidth) GetClearanceConfig(string obstacleType) =>
+        obstacleType switch
+        {
+            "boulder-sm"  => (0, 0),   // 1×1 hard, no soft ring
+            "boulder-md"  => (1, 0),   // 3×3 hard
+            "boulder-lg"  => (3, 0),   // 7×7 hard — massive formation blocks wide area
+            "crater"      => (2, 2),   // 5×5 hard inner + 2-cell slope-gated rim ring
+            "dust-mound"  => (1, 2),   // 3×3 hard centre + 2-cell slope-gated rim ring
+            "antenna"     => (2, 0),   // 5×5 hard — debris field
+            _             => (1, 0),   // default: 3×3 hard
+        };
+
     /// <summary>
     /// Finds the optimal path from <see cref="RouteRequest.StartNode"/> to
     /// <see cref="RouteRequest.EndNode"/> using weighted A*.
@@ -56,19 +83,61 @@ public static class AStarAlgorithm
     {
         var gs = req.GridSize;
         var w  = req.CostWeights;
-        int fp = Math.Clamp(req.RoverFootprint, 0, 4); // footprint half-radius in grid cells
+        int fp = Math.Clamp(req.RoverFootprint, 0, 4);
 
-        // ── Build fast O(1) obstacle lookup ──────────────────────────────────────
-        var obstacleSet = req.AddedObstacles.Count > 0
-            ? new HashSet<int>(req.AddedObstacles.Select(o => o.Z * gs + o.X))
-            : null;
+        // ── Build two-tier obstacle sets ─────────────────────────────────────────
+        HashSet<int>? hardBlockSet = null;
+        HashSet<int>? softBlockSet = null;
+
+        if (req.AddedObstacles.Count > 0)
+        {
+            hardBlockSet = new HashSet<int>(capacity: req.AddedObstacles.Count * 16);
+            softBlockSet = new HashSet<int>(capacity: req.AddedObstacles.Count * 8);
+
+            foreach (var obs in req.AddedObstacles)
+            {
+                var (hardR, softW) = GetClearanceConfig(obs.ObstacleType);
+
+                // Fill hard block — full square kernel of side (2·hardR+1)
+                for (int kdz = -hardR; kdz <= hardR; kdz++)
+                {
+                    int kz = obs.Z + kdz;
+                    if ((uint)kz >= (uint)gs) continue;
+                    for (int kdx = -hardR; kdx <= hardR; kdx++)
+                    {
+                        int kx = obs.X + kdx;
+                        if ((uint)kx >= (uint)gs) continue;
+                        hardBlockSet.Add(kz * gs + kx);
+                    }
+                }
+
+                // Fill soft ring — annular zone just outside the hard block
+                if (softW > 0)
+                {
+                    int outerR = hardR + softW;
+                    for (int kdz = -outerR; kdz <= outerR; kdz++)
+                    {
+                        int kz = obs.Z + kdz;
+                        if ((uint)kz >= (uint)gs) continue;
+                        for (int kdx = -outerR; kdx <= outerR; kdx++)
+                        {
+                            // Only the ring beyond the hard block
+                            if (Math.Abs(kdx) <= hardR && Math.Abs(kdz) <= hardR) continue;
+                            int kx = obs.X + kdx;
+                            if ((uint)kx >= (uint)gs) continue;
+                            int kid = kz * gs + kx;
+                            if (!hardBlockSet.Contains(kid))
+                                softBlockSet.Add(kid);
+                        }
+                    }
+                }
+            }
+        }
 
         // ── Pre-compute slope-impassable set ─────────────────────────────────────
-        // O(n·k²) once — far cheaper than checking inside the hot A* loop.
         var slopeImpassable = BuildSlopeImpassableSet(req.HeightMap, gs, fp, req.MaxInclineDeg);
 
         // ── Pre-compute crater-saturation impassable set ─────────────────────────
-        // Cells where the rover footprint average exceeds the crater threshold.
         var craterImpassable = BuildCraterFootprintImpassableSet(req.CraterMap, gs, fp);
 
         var open   = new PriorityQueue<Node, float>();
@@ -127,14 +196,20 @@ public static class AStarAlgorithm
                 // ── Gate 2: Crater saturation impassable (footprint average) ─────
                 if (craterImpassable.Contains(nId)) continue;
 
-                // ── Gate 3: Volumetric footprint clearance (dynamic obstacles) ───
-                // Reject if ANY cell within the rover's physical footprint (fp-cell
-                // radius around nx,nz) is a dynamic obstacle.
-                if (obstacleSet is not null && FootprintHitsObstacle(nx, nz, fp, gs, obstacleSet))
+                // ── Gate 3a: Hard obstacle block (rigid per-type square kernel) ──
+                if (hardBlockSet is not null && hardBlockSet.Contains(nId)) continue;
+
+                // ── Gate 3b: Hard obstacle volumetric clearance (rover footprint)  ─
+                // Rover footprint must not overlap ANY hard-block cell, preventing
+                // narrow-gap clipping even when the centre cell is technically clear.
+                if (hardBlockSet is not null && fp > 0 && FootprintHitsObstacle(nx, nz, fp, gs, hardBlockSet))
                     continue;
 
-                // Single-point obstacle check (radius-0 case or no footprint extension).
-                if (obstacleSet is not null && fp == 0 && obstacleSet.Contains(nId)) continue;
+                // ── Gate 3c: Soft (slope-gated) rim zone ────────────────────────
+                // A soft-block cell is only impassable when it is ALSO slope-impassable
+                // at this grid position. Gentle rim edges remain traversable.
+                if (softBlockSet is not null && softBlockSet.Contains(nId) && slopeImpassable.Contains(nId))
+                    continue;
 
                 // Step distance: 1.0 for cardinal, √2 for diagonal.
                 float stepDist = (dx[d] != 0 && dz[d] != 0) ? 1.414f : 1f;
@@ -167,7 +242,7 @@ public static class AStarAlgorithm
             }
         }
 
-        // Check reachability: end node must appear in the parent map (or equal start).
+        // Check reachability.
         if (!parent.ContainsKey(endId))
         {
             return new AStarResult([], 0f, visited?.ToArray() ?? [], IsUnreachable: true);
@@ -180,7 +255,7 @@ public static class AStarAlgorithm
 
     /// <summary>
     /// Returns true if any cell within the (2·fp+1)² kernel centred on (cx, cz)
-    /// is a dynamic obstacle. Cells outside the grid are ignored (safe boundary).
+    /// is in the provided obstacle set. Cells outside the grid are ignored.
     /// </summary>
     private static bool FootprintHitsObstacle(
         int cx, int cz, int fp, int gs, HashSet<int> obstacleSet)
@@ -226,10 +301,7 @@ public static class AStarAlgorithm
 
         float maxTan = MathF.Tan(maxInclineDeg * MathF.PI / 180f);
 
-        // Maximum horizontal distance from centre to any kernel corner = fp * √2 grid-units.
-        // We normalise Δh against this worst-case horizontal extent.
         int   scanRadius = fp > 0 ? fp : 1;
-        float diagDist   = scanRadius * 1.414f;
 
         var result = new HashSet<int>(capacity: gs * gs / 8);
 
@@ -240,10 +312,8 @@ public static class AStarAlgorithm
                 int   id      = z * gs + x;
                 float hCenter = heightMap.Length > id ? heightMap[id] : 0f;
 
-                float maxDeltaH = 0f;
+                float maxSlopeTan = 0f;
 
-                // ── Full-perimeter kernel scan ────────────────────────────────
-                // Iterate every cell in the (2·r+1)² kernel around (x,z).
                 for (int kdz = -scanRadius; kdz <= scanRadius; kdz++)
                 {
                     int kz = z + kdz;
@@ -251,27 +321,22 @@ public static class AStarAlgorithm
 
                     for (int kdx = -scanRadius; kdx <= scanRadius; kdx++)
                     {
-                        if (kdx == 0 && kdz == 0) continue; // skip centre
+                        if (kdx == 0 && kdz == 0) continue;
 
                         int kx = x + kdx;
                         if ((uint)kx >= (uint)gs) continue;
 
-                        int   kid     = kz * gs + kx;
-                        float hCorner = heightMap.Length > kid ? heightMap[kid] : 0f;
-                        float dh      = MathF.Abs(hCorner - hCenter);
-
-                        // Use the actual Euclidean distance to this kernel cell as the
-                        // horizontal reference — more accurate than a fixed maxDiag.
+                        int   kid       = kz * gs + kx;
+                        float hCorner   = heightMap.Length > kid ? heightMap[kid] : 0f;
+                        float dh        = MathF.Abs(hCorner - hCenter);
                         float horizDist = MathF.Sqrt(kdx * kdx + kdz * kdz);
                         float slopeHere = dh / horizDist;
 
-                        // Track the maximum slope tangent in the kernel.
-                        if (slopeHere > maxDeltaH) maxDeltaH = slopeHere;
+                        if (slopeHere > maxSlopeTan) maxSlopeTan = slopeHere;
                     }
                 }
 
-                // slope = Δh / horizontal — impassable if slope > tan(maxIncline).
-                if (maxDeltaH > maxTan)
+                if (maxSlopeTan > maxTan)
                     result.Add(id);
             }
         }

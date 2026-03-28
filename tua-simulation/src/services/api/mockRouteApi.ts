@@ -89,13 +89,40 @@ export async function mockCalculateRoute(req: RouteRequest): Promise<RouteRespon
 
   const GS = gridSize;
 
-  // ── Build obstacle set ────────────────────────────────────────────────────
+  // ── Build type-aware obstacle sets (matches C# GetClearanceConfig) ───────────
+  // Hard kernel radii per type — full square of side (2·r+1)
+  const HARD_RADIUS: Record<string, number> = {
+    'boulder-sm': 0,  // 1×1 centre only
+    'boulder-md': 1,  // 3×3
+    'boulder-lg': 3,  // 7×7
+    'crater':     2,  // 5×5 hard inner
+    'dust-mound': 1,  // 3×3 hard centre
+    'antenna':    2,  // 5×5
+  };
+  // Soft ring width (added to hard radius — always blocked in mock for simplicity)
+  const SOFT_RING: Record<string, number> = {
+    'crater':     2,
+    'dust-mound': 2,
+  };
+
   const blocked = new Set<number>();
   for (const o of addedObstacles) {
-    if (o.x >= 0 && o.x < GS && o.z >= 0 && o.z < GS) {
-      blocked.add(o.z * GS + o.x);
+    const type    = (o as { x: number; z: number; obstacleType?: string }).obstacleType ?? 'boulder-md';
+    const hardR   = HARD_RADIUS[type] ?? 1;
+    const softR   = (SOFT_RING[type] ?? 0) + hardR;
+    const outerR  = softR;
+
+    for (let kdz = -outerR; kdz <= outerR; kdz++) {
+      const kzz = o.z + kdz;
+      if (kzz < 0 || kzz >= GS) continue;
+      for (let kdx = -outerR; kdx <= outerR; kdx++) {
+        const kxx = o.x + kdx;
+        if (kxx < 0 || kxx >= GS) continue;
+        blocked.add(kzz * GS + kxx);
+      }
     }
   }
+
 
   // ── A* search ────────────────────────────────────────────────────────────
   const gScore  = new Float32Array(GS * GS).fill(Infinity);

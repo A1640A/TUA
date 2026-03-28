@@ -8,13 +8,9 @@ import { getWorldY } from '@/canvas/terrain/MoonTerrain';
 /**
  * Convert a grid cell to world-space position.
  *
- * CRITICAL FIX: Previously used `heightMap[idx] * TERRAIN_HEIGHT_SCALE` for Y.
- * This ignored the sphere-curvature correction that MoonTerrain.tsx bakes into
- * every vertex.  The obstacle visual appeared at a different elevation than the
- * terrain surface at that grid cell.
- *
- * Now uses getWorldY() — the exact same function MoonTerrain.tsx uses — so
- * obstacle meshes are always co-planar with the terrain surface.
+ * Uses getWorldY() — the exact same function MoonTerrain.tsx uses — so
+ * obstacle meshes are always co-planar with the terrain surface, including
+ * any post-deformation crater/hill elevation changes.
  */
 function gridToWorld(
   grid:      GridNode,
@@ -34,7 +30,13 @@ interface ObstacleStore {
   /** Currently selected obstacle variant for the next placement. */
   selectedVariant: Obstacle['variant'];
 
-  addObstacle:        (grid: GridNode, variant: Obstacle['variant'], heightMap: Float32Array | null) => void;
+  addObstacle:        (
+    grid:          GridNode,
+    variant:       Obstacle['variant'],
+    heightMap:     Float32Array | null,
+    /** Called immediately after placement for crater/dust-mound terrain deformation. */
+    deformTerrain: (grid: GridNode, variant: Obstacle['variant']) => void,
+  ) => void;
   removeObstacle:     (id: string) => void;
   clearObstacles:     () => void;
   setPlacingObstacle: (v: boolean) => void;
@@ -48,7 +50,7 @@ export const useObstacleStore = create<ObstacleStore>((set) => ({
   placingObstacle: false,
   selectedVariant: 'boulder-md',
 
-  addObstacle: (grid, variant, heightMap) =>
+  addObstacle: (grid, variant, heightMap, deformTerrain) =>
     set((s) => {
       if (s.obstacles.some((o) => o.grid.x === grid.x && o.grid.z === grid.z)) return s;
       const obstacle: Obstacle = {
@@ -57,6 +59,10 @@ export const useObstacleStore = create<ObstacleStore>((set) => ({
         variant,
         worldPos: gridToWorld(grid, heightMap),
       };
+      // Deform terrain immediately for landscape-altering obstacle types.
+      // This runs synchronously before the next render so MoonTerrain picks
+      // up the changed heightMap in the same frame.
+      deformTerrain(grid, variant);
       return { obstacles: [...s.obstacles, obstacle] };
     }),
 

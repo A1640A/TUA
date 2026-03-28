@@ -11,10 +11,10 @@ export interface RouteRequest {
   craterMap:      number[];
   costWeights:    CostWeights;
   /**
-   * Dynamically placed obstacles — each entry makes its grid cell impassable.
-   * Send on every reroute call so the C# engine can rebuild the obstacle set.
+   * Each obstacle carries its type so the C# engine applies the correct
+   * per-type clearance kernel (rigid square vs slope-gated rim).
    */
-  addedObstacles: { x: number; z: number }[];
+  addedObstacles: { x: number; z: number; obstacleType: string }[];
   /**
    * When true, the response `visitedNodes` array will be populated with the
    * sequence of grid-cell IDs expanded by A*, enabling the scan-animation overlay.
