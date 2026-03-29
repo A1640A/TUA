@@ -203,6 +203,14 @@ function BoulderLg({
 
   const matPeb = useMemo(() => makeLunarRockMaterial(lunarTex, '#7e6e5a', seed + 58), [lunarTex, seed]);
 
+  // PERF-01 FIX: Pre-allocate all pebble geometries via useMemo.
+  // Previously they were created inside the render return with
+  // `new THREE.IcosahedronGeometry()` — 14 new objects per frame.
+  const pebbleGeos = useMemo(
+    () => pebbles.map(p => new THREE.IcosahedronGeometry(Math.max(0.04, p.size), 1)),
+    [pebbles],
+  );
+
   return (
     <>
       {/* Dominant central mass */}
@@ -227,16 +235,13 @@ function BoulderLg({
         rotation={[rot3[0], rot3[1], rot3[2]]}
         scale={[0.90, 0.60, 0.80]}
       />
-      {/* Pebble scatter arc */}
-      {pebbles.map((p, i) => {
-        const geo = new THREE.IcosahedronGeometry(Math.max(0.04, p.size), 1);
-        return (
-          <mesh key={i} castShadow position={p.pos}>
-            <primitive object={geo} attach="geometry" />
-            <primitive object={matPeb} attach="material" />
-          </mesh>
-        );
-      })}
+      {/* Pebble scatter arc — geometries from useMemo, zero per-render alloc */}
+      {pebbles.map((p, i) => (
+        <mesh key={i} castShadow position={p.pos}>
+          <primitive object={pebbleGeos[i]} attach="geometry" />
+          <primitive object={matPeb} attach="material" />
+        </mesh>
+      ))}
     </>
   );
 }

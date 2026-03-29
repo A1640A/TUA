@@ -106,6 +106,7 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
   reset: () => set({
     status: 'idle', routeResult: null,
     roverState: defaultRover, error: null, placementMode: null,
+    waypoints: [],          // ARCH-01 FIX: clear stale waypoints on reset/new terrain
     cameraMode: 'orbit',
     visitedNodes: [], scanProgress: 0, missionStartMs: null,
   }),

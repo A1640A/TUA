@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useSimulationStore } from '@/store/simulationStore';
 import { useObstacleStore } from '@/store/obstacleStore';
 import Compass from './Compass';
@@ -248,6 +249,56 @@ export default function HUD() {
           </div>
         </div>
       )}
+      {/* ── Completion Banner (UX-04) — Framer Motion spring overlay ────────── */}
+      <AnimatePresence>
+        {status === 'completed' && (
+          <motion.div
+            key="completion-banner"
+            initial={{ opacity: 0, scale: 0.78, y: 30 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.88, y: -20 }}
+            transition={{ type: 'spring', stiffness: 220, damping: 22 }}
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ zIndex: 30 }}
+          >
+            <div
+              className="px-10 py-6 rounded-2xl border text-center"
+              style={{
+                background:   'rgba(0,255,170,0.07)',
+                borderColor:  'rgba(0,255,170,0.50)',
+                boxShadow:    '0 0 70px rgba(0,255,170,0.22), 0 0 150px rgba(0,255,170,0.08)',
+                backdropFilter: 'blur(12px)',
+              }}
+            >
+              <motion.p
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+                className="text-[13px] font-mono text-emerald-300 tracking-[0.45em] uppercase"
+              >
+                ✓ Görev Tamamlandı
+              </motion.p>
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.30 }}
+                className="text-[10px] font-mono tracking-[0.20em] uppercase mt-2"
+                style={{ color: 'rgba(0,255,170,0.55)' }}
+              >
+                Hedef noktasına başarıyla ulaşıldı
+              </motion.p>
+              {/* Green divider line */}
+              <motion.div
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: 1 }}
+                transition={{ delay: 0.2, duration: 0.5 }}
+                className="mt-3 h-px w-full"
+                style={{ background: 'linear-gradient(90deg, transparent, rgba(0,255,170,0.5), transparent)' }}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

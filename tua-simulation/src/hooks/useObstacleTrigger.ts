@@ -47,7 +47,9 @@ export function useObstacleTrigger() {
       const sim = useSimulationStore.getState();
 
       // ── FIXED: trigger for ANY active status, not just 'animating' ──────
-      const activeStatuses: typeof sim.status[] = ['animating', 'completed', 'scanning'];
+      // BUG-03 FIX: 'rerouting' added — placing an obstacle while a reroute
+      // is already in progress no longer silently drops the new obstacle.
+      const activeStatuses: typeof sim.status[] = ['animating', 'completed', 'scanning', 'rerouting'];
       if (!activeStatuses.includes(sim.status)) return;
 
       // Prevent double-trigger on rapid obstacle placement

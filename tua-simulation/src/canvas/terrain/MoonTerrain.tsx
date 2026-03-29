@@ -225,6 +225,12 @@ const MoonTerrain = forwardRef<MoonTerrainHandle>(function MoonTerrain(_props, f
 
   const crosshair = placementMode || placingObstacle;
 
+  // UX-03 FIX: Ensure cursor is restored if component unmounts while
+  // crosshair mode is active (e.g., terrain regeneration during placement).
+  useEffect(() => {
+    return () => { document.body.style.cursor = 'auto'; };
+  }, []);
+
   return (
     <mesh
       ref={meshRef}

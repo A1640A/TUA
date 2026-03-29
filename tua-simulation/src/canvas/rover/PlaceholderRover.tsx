@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useMemo, forwardRef } from 'react';
+import { useRef, useMemo, forwardRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useSimulationStore } from '@/store/simulationStore';
@@ -37,77 +37,166 @@ function Stripe({
   );
 }
 
-/** Turkish crescent + star decal on a side panel */
+/** Improved Turkish flag decal — accurate crescent & 5-point star on side panel */
 function TurkishFlag({ side }: { side: 1 | -1 }) {
-  // Flag lives on the Z+ or Z- face of the chassis
-  const z = side * 0.46;
+  const z = side * 0.462;
   const rot: [number, number, number] = [0, side === 1 ? 0 : Math.PI, 0];
 
-  // Crescent ring points (approximate torus-like shape via thin cylinders)
-  const crescentSegments = useMemo(() => {
-    const pts: { x: number; y: number; angle: number }[] = [];
-    for (let i = 0; i < 10; i++) {
-      const angle = (i / 10) * Math.PI * 1.4 - Math.PI * 0.7 + Math.PI;
-      pts.push({ x: Math.cos(angle) * 0.057, y: Math.sin(angle) * 0.057, angle });
-    }
-    return pts;
-  }, []);
+  // 5-point star vertices: tip positions rotating from top
+  const starAngles = useMemo(() =>
+    [90, 162, 234, 306, 378].map(d => (d * Math.PI) / 180), []);
 
   return (
-    <group position={[0.1, 0.32, z]} rotation={rot}>
+    <group position={[0.05, 0.35, z]} rotation={rot}>
       {/* Red background panel */}
       <mesh>
-        <boxGeometry args={[0.55, 0.28, 0.006]} />
-        <meshStandardMaterial color="#E30A17" roughness={0.7} metalness={0.1} />
+        <boxGeometry args={[0.58, 0.30, 0.005]} />
+        <meshStandardMaterial color="#E30A17" roughness={0.6} metalness={0.15}
+          emissive="#8B0000" emissiveIntensity={0.08} />
       </mesh>
 
-      {/* White crescent outer circle */}
-      <mesh position={[-0.08, 0, 0.004]}>
-        <cylinderGeometry args={[0.075, 0.075, 0.006, 24]} />
-        <meshStandardMaterial color="#ffffff" roughness={0.5} />
+      {/* ── Crescent: white outer disc — rotated so flat face is visible on Z panel */}
+      <mesh position={[-0.1, 0, 0.004]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.082, 0.082, 0.006, 32]} />
+        <meshStandardMaterial color="#FFFFFF" roughness={0.3} metalness={0} />
       </mesh>
-      {/* Crescent cutout (red circle slightly offset) */}
-      <mesh position={[-0.052, 0.009, 0.007]}>
-        <cylinderGeometry args={[0.062, 0.062, 0.008, 24]} />
-        <meshStandardMaterial color="#E30A17" roughness={0.7} />
+      {/* Crescent: red inner disc offset — covers part of white disc */}
+      <mesh position={[-0.072, 0.008, 0.007]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.068, 0.068, 0.008, 32]} />
+        <meshStandardMaterial color="#E30A17" roughness={0.6} metalness={0} />
       </mesh>
 
-      {/* White star (5-point approximated by thin elongated boxes rotated) */}
-      {[0, 72, 144, 216, 288].map((deg, i) => {
-        const rad = (deg * Math.PI) / 180;
+      {/* ── 5-Point Star: 5 box arms radiating from center */}
+      {starAngles.map((angle, i) => (
+        <mesh
+          key={i}
+          position={[
+            0.048 + Math.cos(angle) * 0.028,
+            Math.sin(angle) * 0.028,
+            0.008,
+          ]}
+          rotation={[0, 0, angle - Math.PI / 2]}
+        >
+          {/* Thin elongated box as a star arm */}
+          <boxGeometry args={[0.012, 0.055, 0.004]} />
+          <meshStandardMaterial color="#FFFFFF" roughness={0.3} />
+        </mesh>
+      ))}
+      {/* Star center fill disc */}
+      <mesh position={[0.048, 0, 0.009]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.014, 0.014, 0.004, 10]} />
+        <meshStandardMaterial color="#FFFFFF" roughness={0.3} />
+      </mesh>
+
+      {/* Red accent border line top */}
+      <mesh position={[0, 0.155, 0.006]}>
+        <boxGeometry args={[0.58, 0.005, 0.003]} />
+        <meshStandardMaterial color="#ff2222" emissive="#ff0000" emissiveIntensity={0.5} />
+      </mesh>
+      {/* Red accent border line bottom */}
+      <mesh position={[0, -0.155, 0.006]}>
+        <boxGeometry args={[0.58, 0.005, 0.003]} />
+        <meshStandardMaterial color="#ff2222" emissive="#ff0000" emissiveIntensity={0.5} />
+      </mesh>
+    </group>
+  );
+}
+
+/** Waving Turkish flag on a pole mounted on the rover rear */
+function FlagPole() {
+  const flagRef = useRef<THREE.Mesh>(null);
+  const posAttr  = useRef<THREE.BufferAttribute | null>(null);
+
+  // Build a segmented plane for the flag cloth (8×5 grid = 7×4 quads)
+  const flagGeo = useMemo(() => {
+    const W = 8; // segments wide
+    const H = 4; // segments tall
+    const geo = new THREE.PlaneGeometry(0.48, 0.28, W, H);
+    return geo;
+  }, []);
+
+  // UX-02 FIX: Null guard before access — prevents crash if component
+  // unmounts before useEffect runs or flagRef is briefly null.
+  useEffect(() => {
+    if (!flagRef.current?.geometry?.attributes?.position) return;
+    posAttr.current = flagRef.current.geometry.attributes.position as THREE.BufferAttribute;
+  }, []);
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    const attr = posAttr.current;
+    if (!attr) return;
+    const W = 8; const H = 4;
+    for (let j = 0; j <= H; j++) {
+      for (let i = 0; i <= W; i++) {
+        const idx = j * (W + 1) + i;
+        // u = 0 at pole (left edge), 1 at free end
+        const u = i / W;
+        // Wave amplitude grows towards free end
+        const wave = Math.sin(u * 3.5 - t * 4.2) * 0.032 * u
+                   + Math.sin(u * 6   - t * 3.0) * 0.012 * u;
+        attr.setZ(idx, wave);
+      }
+    }
+    attr.needsUpdate = true;
+  });
+
+  return (
+    // Mounted rear-left of rover, pole base at chassis top
+    <group position={[-0.38, 0.67, 0.55]}>
+      {/* Pole */}
+      <mesh position={[0, 0.38, 0]}>
+        <cylinderGeometry args={[0.009, 0.009, 0.76, 8]} />
+        <meshStandardMaterial color="#c0c8d0" metalness={0.95} roughness={0.1} />
+      </mesh>
+      {/* Pole top ball */}
+      <mesh position={[0, 0.77, 0]}>
+        <sphereGeometry args={[0.018, 10, 10]} />
+        <meshStandardMaterial color="#ffdd00" emissive="#ffcc00" emissiveIntensity={0.8} metalness={0.9} />
+      </mesh>
+
+      {/* Flag cloth — starts at pole top, extends to the right (+X) */}
+      {/* Red background */}
+      <mesh ref={flagRef} geometry={flagGeo}
+        position={[0.24, 0.62, 0]}
+        rotation={[0, 0, 0]}
+      >
+        <meshStandardMaterial
+          color="#E30A17" side={THREE.DoubleSide}
+          roughness={0.75} metalness={0.05}
+          emissive="#600000" emissiveIntensity={0.15}
+        />
+      </mesh>
+
+      {/* White crescent on flag (static overlay, slightly in front) */}
+      {/* Cylinder must be rotated PI/2 around X to face Z (the viewing direction) */}
+      <mesh position={[0.06, 0.62, 0.012]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.058, 0.058, 0.004, 24]} />
+        <meshStandardMaterial color="#FFFFFF" roughness={0.3} />
+      </mesh>
+      {/* Red cutout disc — slightly offset X to create crescent */}
+      <mesh position={[0.082, 0.626, 0.015]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.048, 0.048, 0.006, 24]} />
+        <meshStandardMaterial color="#E30A17" roughness={0.6} />
+      </mesh>
+      {/* Small star on flag — 5 box arms */}
+      {[90, 162, 234, 306, 378].map((deg, i) => {
+        const angle = (deg * Math.PI) / 180;
         return (
-          <mesh
-            key={i}
-            position={[0.03 + Math.cos(rad) * 0.001, Math.sin(rad) * 0.001, 0.006]}
-            rotation={[Math.PI / 2, 0, rad]}
+          <mesh key={i}
+            position={[0.125 + Math.cos(angle) * 0.018, 0.62 + Math.sin(angle) * 0.018, 0.014]}
+            rotation={[0, 0, angle - Math.PI / 2]}
           >
-            <coneGeometry args={[0.014, 0.055, 3]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.5} />
+            <boxGeometry args={[0.008, 0.032, 0.003]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.3} />
           </mesh>
         );
       })}
-
-      {/* "TÜRKİYE" text panel below flag */}
-      <mesh position={[0, -0.19, 0]}>
-        <boxGeometry args={[0.55, 0.07, 0.006]} />
-        <meshStandardMaterial color="#d0d8e8" metalness={0.5} roughness={0.3} />
+      {/* Star center */}
+      <mesh position={[0.125, 0.62, 0.016]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.009, 0.009, 0.003, 8]} />
+        <meshStandardMaterial color="#FFFFFF" roughness={0.3} />
       </mesh>
-      {/* Letter approximations as raised bars — T */}
-      {[
-        [-0.22, 0, 0], [-0.185, -0.012, 0], [-0.185, 0.012, 0],
-        [-0.15, 0, 0],
-        [-0.11, 0.01, 0], [-0.11, -0.01, 0],
-        [-0.07, 0, 0],
-        [-0.03, 0.01, 0], [-0.03, -0.01, 0],
-        [0.01, 0, 0],
-        [0.05, 0, 0],
-        [0.09, 0.01, 0], [0.09, -0.01, 0],
-      ].map((p, i) => (
-        <mesh key={i} position={[p[0], -0.19 + p[1], 0.006]}>
-          <boxGeometry args={[0.018, 0.042, 0.004]} />
-          <meshStandardMaterial color="#1a2040" />
-        </mesh>
-      ))}
     </group>
   );
 }
@@ -368,6 +457,17 @@ export default function PlaceholderRover({
         <meshStandardMaterial color="#c4cdd8" metalness={0.6} roughness={0.32} />
       </mesh>
 
+      {/* ── TUA red accent stripe — top front edge ───────────────────── */}
+      <mesh position={[0, 0.656, -0.46]}>
+        <boxGeometry args={[1.15, 0.018, 0.006]} />
+        <meshStandardMaterial color="#E30A17" emissive="#E30A17" emissiveIntensity={0.6} roughness={0.4} />
+      </mesh>
+      {/* TUA red accent stripe — top rear edge */}
+      <mesh position={[0, 0.656, 0.46]}>
+        <boxGeometry args={[1.15, 0.018, 0.006]} />
+        <meshStandardMaterial color="#E30A17" emissive="#E30A17" emissiveIntensity={0.6} roughness={0.4} />
+      </mesh>
+
       {/* Body front angled plate */}
       <mesh position={[0, 0.44, -0.52]} rotation={[0.35, 0, 0]}>
         <boxGeometry args={[1.1, 0.38, 0.08]} />
@@ -552,6 +652,9 @@ export default function PlaceholderRover({
 
       {/* ── Robotic arm ──────────────────────────────────────────────── */}
       <RoboticArm moving={moving} />
+
+      {/* ── Turkish flag pole (rear left) ────────────────────────────── */}
+      <FlagPole />
 
       {/* ── True Clearance A* bounding-box visualizer ─────────────────
           Shows judges the exact (2·RoverClearanceRadius+1)² C-Space kernel

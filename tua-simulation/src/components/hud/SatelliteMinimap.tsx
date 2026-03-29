@@ -388,9 +388,26 @@ export default function SatelliteMinimap() {
   }, []);
 
   useEffect(() => {
-    rafRef.current = requestAnimationFrame(draw);
+    let running = true;
+
+    const loop = () => {
+      if (!running) return;
+      draw();
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+
     return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      // BUG-05 FIX: 'running' flag guarantees the loop stops even if
+      // cancelAnimationFrame races with a pending callback. Also prevents
+      // cancelAnimationFrame(0) no-op when rafRef was never assigned a
+      // valid frame ID (e.g. rapid mount/unmount).
+      running = false;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     };
   }, [draw]);
 

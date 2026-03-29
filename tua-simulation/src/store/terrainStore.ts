@@ -124,12 +124,15 @@ export const useTerrainStore = create<TerrainStore>((set, get) => ({
     const gs = terrain.config.gridSize;
 
     if (variant === 'crater') {
-      // Mutate in-place, then spread to new object to trigger React diff
+      // BUG-04 FIX: Mutate in-place then create a NEW heightMap reference
+      // (slice()) so any useMemo depending on terrain.heightMap identity
+      // correctly invalidates. Previously the spread kept the same Float32Array
+      // reference, risking stale memo caches in MoonTerrain.
       carveCrater(terrain.heightMap, grid, gs);
-      set({ terrain: { ...terrain } });
+      set({ terrain: { ...terrain, heightMap: terrain.heightMap.slice() } });
     } else if (variant === 'dust-mound') {
       raiseDustHill(terrain.heightMap, grid, gs);
-      set({ terrain: { ...terrain } });
+      set({ terrain: { ...terrain, heightMap: terrain.heightMap.slice() } });
     }
     // boulder-sm / boulder-md / boulder-lg / antenna → no terrain deformation
   },

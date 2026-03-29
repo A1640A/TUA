@@ -128,7 +128,9 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
   const progressRef = useRef(0);
 
   /** World-space position from the previous frame (for FD heading). */
-  const prevPosRef = useRef<THREE.Vector3 | null>(null);
+  const prevPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  /** Flag: whether prevPosRef holds a valid previous position yet. */
+  const hasPrevPos = useRef(false);
 
   /** Smoothed chassis centre Y (suspension spring). */
   const smoothY = useRef(0);
@@ -142,10 +144,21 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
   const { setRoverState, setStatus, status, routeResult } = useSimulationStore();
   const terrain = useTerrainStore(s => s.terrain);
 
+  // PERF-03 FIX: Isolate terrain in a ref so animate() callback doesn't
+  // need to be re-created every time terrain changes (e.g. on each obstacle
+  // deformation). The ref always sees the latest terrain at call-time.
+  const terrainRef = useRef(terrain);
+  useEffect(() => { terrainRef.current = terrain; }, [terrain]);
+
+  // UX-01: HUD throttle counter — update Zustand at 20fps, not 60fps.
+  // The 3D mesh position/rotation is driven by the raw CatmullRom curve
+  // (not by the store), so sub-throttled HUD updates don't affect smoothness.
+  const hudFrame = useRef(0);
+
   // Reset all accumulators on new route
   useEffect(() => {
     progressRef.current    = 0;
-    prevPosRef.current     = null;
+    hasPrevPos.current     = false;   // prev pos invalidated — don't use stale FD heading
     smoothY.current        = 0;
     smoothHeadingQ.current.identity();
     smoothQ.current.identity();
@@ -165,7 +178,8 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
 
     // ── Step 1: Heading from finite-difference (smoother than CatmullRom tangent)
     let headingRad: number;
-    if (prevPosRef.current) {
+    if (hasPrevPos.current) {
+      // ARCH-03 FIX: subVectors from useRef<Vector3> — no clone() allocation.
       _posDelta.subVectors(pos, prevPosRef.current);
       const dLen = _posDelta.length();
       headingRad = dLen > 0.0005
@@ -179,8 +193,11 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
 
     // Speed estimate (world-units/s at 60 fps)
     let speed = 0;
-    if (prevPosRef.current) speed = pos.distanceTo(prevPosRef.current) * 60;
-    prevPosRef.current = pos.clone();
+    if (hasPrevPos.current) speed = pos.distanceTo(prevPosRef.current) * 60;
+    // ARCH-03 FIX: copy() instead of clone() — reuses the existing Vector3,
+    // zero GC overhead per frame (was: new THREE.Vector3 every frame at 60fps).
+    prevPosRef.current.copy(pos);
+    hasPrevPos.current = true;
 
     // ── Step 2: SLERP smoothHeadingQ toward raw heading ───────────────────────
     //
@@ -199,6 +216,10 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
     let yFL = 0, yFR = 0, yRL = 0, yRR = 0;
     let centerY = pos.y;
 
+    // PERF-03 FIX: read terrain from ref, not from closure captured during
+    // useCallback creation. This decouples terrain changes from callback
+    // re-creation, preventing a useFrame re-bind on every obstacle deformation.
+    const terrain = terrainRef.current;
     if (terrain?.heightMap) {
       const hm = terrain.heightMap;
 
@@ -305,25 +326,33 @@ export function useRoverAnimation(curve: THREE.CatmullRomCurve3 | null) {
     // Extracting XYZ from the quaternion guarantees an exact round-trip.
     _euler.setFromQuaternion(smoothQ.current, 'XYZ');
 
-    setRoverState({
-      position:     [pos.x, smoothY.current, pos.z],
-      rotation:     [_euler.x, _euler.y, _euler.z],
-      pathProgress: progressRef.current,
-      speed,
-      heading:      headingDeg,
-      elevation:    smoothY.current,
-      wheelHeights: [yFL, yFR, yRL, yRR],
-    });
+    // UX-01: Throttle HUD/store updates to ~20fps (every 3rd frame).
+    // The 3D mesh reads pos/rotation directly from the CatmullRom curve;
+    // Zustand is only used by the HUD overlay, so 20fps is imperceptible.
+    hudFrame.current = (hudFrame.current + 1) % 3;
+    if (hudFrame.current === 0) {
+      setRoverState({
+        position:     [pos.x, smoothY.current, pos.z],
+        rotation:     [_euler.x, _euler.y, _euler.z],
+        pathProgress: progressRef.current,
+        speed,
+        heading:      headingDeg,
+        elevation:    smoothY.current,
+        wheelHeights: [yFL, yFR, yRL, yRR],
+      });
+    }
 
     if (progressRef.current >= 1) {
       setStatus('completed');
       progressRef.current = 0;
     }
-  }, [curve, status, terrain, setRoverState, setStatus]);
+  // PERF-03 FIX: 'terrain' removed from deps — read via terrainRef inside.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [curve, status, setRoverState, setStatus]);
 
   const reset = useCallback(() => {
     progressRef.current    = 0;
-    prevPosRef.current     = null;
+    hasPrevPos.current     = false;
     smoothY.current        = 0;
     smoothHeadingQ.current.identity();
     smoothQ.current.identity();

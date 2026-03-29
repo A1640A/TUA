@@ -40,8 +40,11 @@ class MinHeap {
   }
 
   pop(): AStarNode | undefined {
+    if (this.data.length === 0) return undefined;
     const top = this.data[0];
     const last = this.data.pop()!;
+    // After pop(): if array is now empty (was single-element), last === top (same ref).
+    // In that case skip the sinkDown — no elements to rearrange.
     if (this.data.length > 0) {
       this.data[0] = last;
       this._sinkDown(0);
@@ -179,6 +182,11 @@ export async function mockCalculateRoute(req: RouteRequest): Promise<RouteRespon
         costWeights.slopeWeight      * slope * slope * 4 +
         costWeights.craterRiskWeight * cr    * 8 +
         costWeights.elevationWeight  * dH    * 2;
+
+      // BUG-02 FIX: NaN guard — heightMap corruption or weight=NaN causes
+      // moveCost=NaN, which makes (NaN >= Infinity) === false, re-queuing
+      // the node forever and causing an infinite loop.
+      if (!isFinite(moveCost)) continue;
 
       const tentativeG = gScore[curIdx] + moveCost;
       if (tentativeG >= gScore[nIdx]) continue;
