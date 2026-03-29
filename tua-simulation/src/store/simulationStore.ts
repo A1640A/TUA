@@ -55,6 +55,7 @@ interface SimulationStore {
   setScanProgress:  (idx: number) => void;
   startMissionClock: () => void;
   toggleClearanceBounds: () => void;
+  clearWaypoints:   () => void;
   reset:            () => void;
 }
 
@@ -103,10 +104,10 @@ export const useSimulationStore = create<SimulationStore>((set) => ({
     missionStartMs: s.missionStartMs ?? Date.now(),
   })),
   toggleClearanceBounds: ()         => set((s) => ({ showClearanceBounds: !s.showClearanceBounds })),
+  clearWaypoints:   ()              => set({ waypoints: [] }),
   reset: () => set({
     status: 'idle', routeResult: null,
     roverState: defaultRover, error: null, placementMode: null,
-    waypoints: [],          // ARCH-01 FIX: clear stale waypoints on reset/new terrain
     cameraMode: 'orbit',
     visitedNodes: [], scanProgress: 0, missionStartMs: null,
   }),

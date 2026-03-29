@@ -26,11 +26,11 @@ export function useSimulation() {
 
   /**
    * Full initial route calculation.
-   * Resets animation state, then fires the API (no visitedNodes requested
-   * for the first run to keep latency minimal).
+   * Resets animation/scan state (but NOT waypoints — they are preserved
+   * so the user doesn't have to re-place them after each calculation).
    */
   const startSimulation = async () => {
-    store.reset();
+    store.reset();    // resets status, roverState, routeResult — NOT waypoints
     await calculate({ returnVisited: false });
   };
 
@@ -56,6 +56,7 @@ export function useSimulation() {
 
   const regenerateTerrain = () => {
     store.reset();
+    store.clearWaypoints();   // new terrain → old grid coords are no longer valid
     obstacleStore.clearObstacles();
     terrainStore.updateConfig({ seed: Math.floor(Math.random() * 99999) });
   };
