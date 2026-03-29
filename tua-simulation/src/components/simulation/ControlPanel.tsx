@@ -73,18 +73,18 @@ export default function ControlPanel() {
   };
 
   return (
-    <div className="flex flex-col gap-3 w-72">
+    <div className="flex flex-col gap-3 w-80">
       {/* ── System Status ────────────────────────────────────────────────── */}
       <Panel title="Sistem Durumu">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[14px] font-bold text-white leading-tight">TUA Simülasyonu</p>
-            <p className="text-[11px] text-white/55 font-mono mt-1">Tohum: {seed}</p>
+            <p className="text-[15px] font-bold text-white leading-tight">TUA Simülasyonu</p>
+            <p className="text-[12px] text-white/55 font-mono mt-1">Tohum: {seed}</p>
           </div>
           <Badge status={status} />
         </div>
         {error && (
-          <p className="mt-2 text-[12px] text-red-300 bg-red-500/12 rounded-lg px-3 py-2 border border-red-500/25">
+          <p className="mt-2 text-[13px] text-red-300 bg-red-500/12 rounded-lg px-3 py-2 border border-red-500/25">
             {error}
           </p>
         )}
@@ -94,21 +94,21 @@ export default function ControlPanel() {
       <Panel title="Navigasyon Noktaları">
         <div className="space-y-2.5 mb-3">
           <div className="flex items-center gap-2.5">
-            <span className="w-6 h-6 rounded-full bg-green-500/25 border border-green-500/50 flex items-center justify-center text-green-300 font-bold text-[10px]">B</span>
-            <span className="text-[12px] text-white/65 font-medium">Başlangıç:</span>
-            <span className="font-mono text-[13px] font-bold text-white/95 ml-auto">{startCoords}</span>
+            <span className="w-7 h-7 rounded-full bg-green-500/25 border border-green-500/50 flex items-center justify-center text-green-300 font-bold text-[11px]">B</span>
+            <span className="text-[13px] text-white/65 font-medium">Başlangıç:</span>
+            <span className="font-mono text-[14px] font-bold text-white/95 ml-auto">{startCoords}</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <span className="w-6 h-6 rounded-full bg-red-500/25 border border-red-500/50 flex items-center justify-center text-red-300 font-bold text-[10px]">H</span>
-            <span className="text-[12px] text-white/65 font-medium">Hedef:</span>
-            <span className="font-mono text-[13px] font-bold text-white/95 ml-auto">{endCoords}</span>
+            <span className="w-7 h-7 rounded-full bg-red-500/25 border border-red-500/50 flex items-center justify-center text-red-300 font-bold text-[11px]">H</span>
+            <span className="text-[13px] text-white/65 font-medium">Hedef:</span>
+            <span className="font-mono text-[14px] font-bold text-white/95 ml-auto">{endCoords}</span>
           </div>
         </div>
 
         <div className="flex gap-2">
           <button
             onClick={() => toggleMode('start')}
-            className={`flex-1 flex items-center justify-center gap-1.5 text-[12px] font-semibold py-2 px-3 rounded-lg border transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold py-2.5 px-3 rounded-lg border transition-all ${
               placementMode === 'start'
                 ? 'bg-green-500/20 border-green-500/60 text-green-300 shadow-[0_0_12px_rgba(34,197,94,0.25)]'
                 : 'bg-white/4 border-white/10 text-white/65 hover:bg-green-500/10 hover:border-green-500/30 hover:text-green-400'
@@ -119,7 +119,7 @@ export default function ControlPanel() {
           </button>
           <button
             onClick={() => toggleMode('end')}
-            className={`flex-1 flex items-center justify-center gap-1.5 text-[12px] font-semibold py-2 px-3 rounded-lg border transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold py-2.5 px-3 rounded-lg border transition-all ${
               placementMode === 'end'
                 ? 'bg-red-500/20 border-red-500/60 text-red-300 shadow-[0_0_12px_rgba(239,68,68,0.25)]'
                 : 'bg-white/4 border-white/10 text-white/65 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400'
@@ -131,7 +131,7 @@ export default function ControlPanel() {
         </div>
 
         {placementMode && (
-          <p className="mt-2.5 text-[11px] text-white/60 text-center animate-pulse">
+          <p className="mt-2.5 text-[12px] text-white/60 text-center animate-pulse">
             {placementMode === 'start' ? '🟢' : '🔴'} Haritada{' '}
             {placementMode === 'start' ? 'başlangıç' : 'hedef'} noktasını seçin
           </p>
@@ -156,8 +156,8 @@ export default function ControlPanel() {
                   isSelected ? 'shadow-[0_0_10px_rgba(255,255,255,0.08)]' : '',
                 ].join(' ')}
               >
-                <span className="text-xl leading-none">{emoji}</span>
-                <span className="text-[10px] font-mono font-semibold leading-tight">{label}</span>
+                <span className="text-2xl leading-none">{emoji}</span>
+                <span className="text-[11px] font-mono font-semibold leading-tight">{label}</span>
               </button>
             );
           })}
@@ -167,7 +167,7 @@ export default function ControlPanel() {
         <div className="flex gap-2 mb-2">
           <button
             onClick={toggleObstaclePlacing}
-            className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg border transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold py-2.5 px-3 rounded-lg border transition-all ${
               placingObstacle
                 ? 'bg-orange-500/20 border-orange-500/60 text-orange-300 shadow-[0_0_12px_rgba(249,115,22,0.25)] animate-pulse'
                 : 'bg-white/4 border-white/10 text-white/50 hover:bg-orange-500/10 hover:border-orange-500/30 hover:text-orange-400'
@@ -179,7 +179,7 @@ export default function ControlPanel() {
           <button
             onClick={clearObstacles}
             disabled={obstacles.length === 0}
-            className="flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg border transition-all bg-white/4 border-white/10 text-white/50 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex items-center justify-center gap-1.5 text-[13px] font-semibold py-2.5 px-3 rounded-lg border transition-all bg-white/4 border-white/10 text-white/50 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <Trash2 size={11} />
             Temizle
@@ -189,11 +189,11 @@ export default function ControlPanel() {
         {/* Status row */}
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${obstacles.length > 0 ? 'bg-orange-400 animate-pulse' : 'bg-white/25'}`} />
-          <span className="text-[11px] font-mono text-white/60">
+          <span className="text-[12px] font-mono text-white/60">
             {obstacles.length > 0 ? `${obstacles.length} aktif engel` : 'Engel yok'}
           </span>
           {obstacles.length > 0 && (
-            <span className="text-[10px] text-white/40 ml-auto">Sağ tık → kaldır</span>
+            <span className="text-[11px] text-white/40 ml-auto">Sağ tık → kaldır</span>
           )}
         </div>
 
@@ -203,7 +203,7 @@ export default function ControlPanel() {
             <span className="text-lg leading-none">
               {OBSTACLE_PALETTE.find(p => p.variant === selectedVariant)?.emoji}
             </span>
-            <p className="text-[11px] text-orange-300 font-mono">
+            <p className="text-[12px] text-orange-300 font-mono">
               {OBSTACLE_PALETTE.find(p => p.variant === selectedVariant)?.label} seçildi — haritaya tıkla
             </p>
           </div>

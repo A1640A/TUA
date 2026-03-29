@@ -26,7 +26,7 @@ export default function Slider({
 
       {/* Description — readable grey, not tiny italic */}
       {description && (
-        <p className="text-[11px] leading-[1.55] text-white/50">
+        <p className="text-[12px] leading-[1.55] text-white/50">
           {description}
         </p>
       )}

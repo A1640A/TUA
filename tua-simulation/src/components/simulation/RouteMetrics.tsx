@@ -6,12 +6,12 @@ function TelemetryRow({ label, value, unit, accent }: {
 }) {
   return (
     <div className="flex justify-between items-center py-2 border-b border-white/8 last:border-0">
-      <span className="text-[11px] text-white/55 font-mono uppercase tracking-[0.1em]">
+      <span className="text-[12px] text-white/55 font-mono uppercase tracking-[0.1em]">
         {label}
       </span>
-      <span className={`text-[13px] font-mono font-bold tabular-nums ${accent ? 'text-cyan-300' : 'text-white/90'}`}>
+      <span className={`text-[15px] font-mono font-bold tabular-nums ${accent ? 'text-cyan-300' : 'text-white/90'}`}>
         {value}
-        {unit && <span className="text-white/40 ml-1 text-[10px] font-normal">{unit}</span>}
+        {unit && <span className="text-white/40 ml-1 text-[11px] font-normal">{unit}</span>}
       </span>
     </div>
   );
@@ -34,8 +34,8 @@ export default function RouteMetrics() {
       {/* Progress bar */}
       <div className="mb-4">
         <div className="flex justify-between mb-1.5">
-          <span className="text-[11px] text-white/55 font-mono uppercase tracking-[0.1em]">İlerleme</span>
-          <span className="text-[12px] font-mono font-bold text-cyan-300 tabular-nums">{progressPct}%</span>
+          <span className="text-[12px] text-white/55 font-mono uppercase tracking-[0.1em]">İlerleme</span>
+          <span className="text-[14px] font-mono font-bold text-cyan-300 tabular-nums">{progressPct}%</span>
         </div>
         <div className="h-2 bg-white/10 rounded-full overflow-hidden">
           <div
@@ -61,14 +61,14 @@ export default function RouteMetrics() {
           )}
         </>
       ) : (
-        <p className="text-[11px] text-white/35 text-center py-3 font-mono">
+        <p className="text-[12px] text-white/35 text-center py-3 font-mono">
           Rota henüz hesaplanmadı
         </p>
       )}
 
       {/* Live telemetry separator */}
       <div className="mt-4 pt-3 border-t border-white/10">
-        <span className="text-[10px] font-mono font-semibold text-white/40 uppercase tracking-[0.18em]">
+        <span className="text-[12px] font-mono font-semibold text-white/40 uppercase tracking-[0.18em]">
           Canlı Telemetri
         </span>
         <div className="mt-2">

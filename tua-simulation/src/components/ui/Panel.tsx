@@ -23,16 +23,16 @@ export default function Panel({ children, className = '', title }: PanelProps) {
       ].join(' ')}
     >
       {title && (
-        <div className="px-4 py-2.5 border-b border-white/10 bg-white/[0.03]">
+        <div className="px-5 py-3 border-b border-white/10 bg-white/[0.03]">
           <span
-            className="text-[11px] font-bold tracking-[0.18em] uppercase"
-            style={{ color: '#7dd3fc' /* sky-300 — brighter than sky-400 */ }}
+            className="text-[13px] font-bold tracking-[0.14em] uppercase"
+            style={{ color: '#7dd3fc' /* sky-300 */ }}
           >
             {title}
           </span>
         </div>
       )}
-      <div className="p-4">{children}</div>
+      <div className="p-5">{children}</div>
     </motion.div>
   );
 }

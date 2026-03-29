@@ -1,5 +1,36 @@
 'use client';
-import { Suspense, useRef, Component, type ReactNode } from 'react';
+/**
+ * Scene v3 — Tüm class component'lar Canvas içinden kaldırıldı.
+ *
+ * ════════════════════════════════════════════════════════════════════
+ *  HATA ANALİZİ
+ * ════════════════════════════════════════════════════════════════════
+ *
+ *  "Internal React error: Expected static flag was missing"
+ *  Kök neden:
+ *    PostProcessingErrorBoundary — class component — R3F'nin özel
+ *    Canvas reconciler'ı içindeydi. React 19, R3F'nin custom fiber
+ *    reconciler'ı ile class component'ı birlikte işlerken dahili
+ *    statik bayrak bilgisini kaybederek bu iç hatayı üretiyordu.
+ *
+ *  "Cannot read properties of null (reading 'alpha')"
+ *  Kök neden:
+ *    HMR sırasında renderer null → EffectComposer crash.
+ *    PostProcessing.tsx'deki `if (!gl) return null` guard ile çözüldü.
+ *
+ *  "Maximum update depth exceeded"
+ *  Kök neden:
+ *    componentDidCatch → setState({ hasError: false }) → re-render →
+ *    aynı hata → sonsuz döngü.
+ *    Class component kaldırılarak tamamen ortadan kalktı.
+ *
+ *  ÇÖZÜM:
+ *    PostProcessingErrorBoundary tamamen kaldırıldı. PostProcessing
+ *    doğrudan <Suspense> içinde bağlanıyor.
+ *    PostProcessing.tsx'de useThree() null guard mevcut.
+ */
+
+import { Suspense, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
@@ -23,26 +54,6 @@ import CameraManager     from './CameraManager';
 import { useRoverAnimation, useRouteCurve } from './SceneAnimator';
 import { useTerrain }    from '@/hooks/useTerrain';
 
-// ─── PostProcessing error boundary ────────────────────────────────────────────
-class PostProcessingErrorBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(err: Error) {
-    if (err.message.includes('alpha') || err.message.includes('EffectComposer')) {
-      this.setState({ hasError: false });
-    }
-  }
-  render() {
-    return this.state.hasError ? null : this.props.children;
-  }
-}
-
 // ─── Stable GL config ─────────────────────────────────────────────────────────
 const GL_CONFIG: THREE.WebGLRendererParameters = {
   antialias:       true,
@@ -58,15 +69,7 @@ function SceneContent() {
 
   /**
    * OrbitControls ref — passed to CameraManager so it can:
-   *   • Call saveState() right before entering FPV (preserves orbit pose)
-   *   • Force enabled=false imperatively during FPV to kill the damping loop
-   *   • Call reset() + re-enable when returning to orbit
-   *
-   * NOTE: makeDefault is intentionally REMOVED from OrbitControls.
-   * makeDefault registers OrbitControls as the R3F default controls, which
-   * causes it to call update() every frame regardless of the `enabled` prop —
-   * this overwrites camera.quaternion written by CameraManager in FPV mode.
-   * Without makeDefault the orbit loop only runs when enabled=true.
+   *   • Ensure orbit is always enabled after any state changes
    */
   const orbitRef = useRef<OrbitControlsImpl>(null);
 
@@ -127,10 +130,15 @@ export default function Scene() {
         <SceneContent />
       </Suspense>
 
+      {/*
+       * PostProcessing is wrapped in its own Suspense (lazy shader compilation).
+       * NO class-based error boundary here — class components inside R3F's
+       * custom Canvas reconciler cause "Expected static flag was missing" in
+       * React 19. Instead, PostProcessing.tsx itself guards against null gl
+       * via useThree() and returns null early if the renderer is not ready.
+       */}
       <Suspense fallback={null}>
-        <PostProcessingErrorBoundary>
-          <PostProcessing />
-        </PostProcessingErrorBoundary>
+        <PostProcessing />
       </Suspense>
     </Canvas>
   );

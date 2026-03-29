@@ -3,6 +3,7 @@ import { useRef, useMemo, forwardRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useSimulationStore } from '@/store/simulationStore';
+import { useRoverRefStore } from '@/store/roverRefStore';
 import { ROVER_SPEED } from '@/lib/constants';
 import RoverClearanceBounds from './RoverClearanceBounds';
 
@@ -234,6 +235,10 @@ export default function PlaceholderRover({
   const groupRef = useRef<THREE.Group>(null);
   const bodyRef  = useRef<THREE.Mesh>(null);
 
+  /* ── roverRefStore — share world matrix with FPV mini canvas ─────────── */
+  const setRoverMatrix = useRoverRefStore(s => s.setRoverMatrix);
+  const _matrixArr = useRef(new Float32Array(16));
+
   // 6 wheels: FL FM FR  RL RM RR
   const wFL = useRef<THREE.Group>(null);
   const wFM = useRef<THREE.Group>(null);
@@ -248,16 +253,29 @@ export default function PlaceholderRover({
 
   /* ── Store ─────────────────────────────────────────────────────────── */
   const status       = useSimulationStore(s => s.status);
-  const cameraMode   = useSimulationStore(s => s.cameraMode);
   const wheelHeights = useSimulationStore(s => s.roverState.wheelHeights);
   const roverPos     = useSimulationStore(s => s.roverState.position);
   const showClearanceBounds = useSimulationStore(s => s.showClearanceBounds);
-  const fpv          = cameraMode === 'fpv';
   const moving       = status === 'animating';
 
   /* ── Animation ─────────────────────────────────────────────────────── */
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
+
+    // ── Publish world matrix to roverRefStore ────────────────────────────
+    // FPVCamera in the second Canvas reads this every frame to position itself.
+    if (groupRef.current) {
+      groupRef.current.updateWorldMatrix(true, false);
+      groupRef.current.matrixWorld.toArray(_matrixArr.current);
+      setRoverMatrix(
+        _matrixArr.current,
+        [
+          groupRef.current.matrixWorld.elements[12],
+          groupRef.current.matrixWorld.elements[13],
+          groupRef.current.matrixWorld.elements[14],
+        ],
+      );
+    }
 
     // Wheel spin (all 6)
     const spinDelta = moving ? ROVER_SPEED * 6.5 : 0;
@@ -300,8 +318,8 @@ export default function PlaceholderRover({
       bodyRef.current.rotation.x = moving ? Math.sin(t * 5 + 1) * 0.004 : 0;
     }
 
-    // Stereo camera mast pan
-    if (mastRef.current && !fpv) {
+    // Stereo camera mast pan — always animate (FPV now in separate canvas)
+    if (mastRef.current) {
       mastRef.current.rotation.y = Math.sin(t * 0.6) * Math.PI * 0.3;
     }
 
@@ -323,7 +341,7 @@ export default function PlaceholderRover({
   ];
 
   return (
-    <group ref={groupRef} position={position} rotation={rotation} visible={!fpv}>
+    <group ref={groupRef} position={position} rotation={rotation}>
 
       {/* ── Chassis frame (rocker-bogie beams) ───────────────────────── */}
       {/* Left rocker beam */}

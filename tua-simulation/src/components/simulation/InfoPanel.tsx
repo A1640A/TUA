@@ -9,7 +9,7 @@ import { USE_MOCK_API } from '@/lib/constants';
  */
 export default function InfoPanel() {
   return (
-    <div className="flex flex-col gap-3 w-68">
+    <div className="flex flex-col gap-3 w-80">
       <Panel title="Görev Telemetrisi">
         <RouteMetrics />
       </Panel>
@@ -20,12 +20,12 @@ export default function InfoPanel() {
             'w-2.5 h-2.5 rounded-full shrink-0',
             USE_MOCK_API ? 'bg-yellow-400' : 'bg-green-400 animate-pulse',
           ].join(' ')} />
-          <span className="text-[12px] text-white/75 font-medium">
+          <span className="text-[13px] text-white/75 font-medium">
             {USE_MOCK_API ? 'Mock Modu (İstemci Taraflı)' : 'C# API Bağlandı'}
           </span>
         </div>
         {!USE_MOCK_API && (
-          <p className="mt-1.5 text-[10px] font-mono text-white/35 break-all pl-5">
+          <p className="mt-1.5 text-[11px] font-mono text-white/35 break-all pl-5">
             {process.env.NEXT_PUBLIC_API_URL}
           </p>
         )}
@@ -42,8 +42,8 @@ export default function InfoPanel() {
             { num: '06', color: 'text-white/40',   text: 'Sağ tıkla engeli kaldır' },
           ].map(({ num, color, text, bold, highlight }) => (
             <li key={num} className="flex gap-3 items-start">
-              <span className={`${color} font-mono font-bold text-[12px] shrink-0 mt-px`}>{num}</span>
-              <span className={`text-[12px] leading-[1.5] ${highlight ? 'text-white/80' : 'text-white/60'} ${bold ? 'font-medium' : ''}`}>
+              <span className={`${color} font-mono font-bold text-[13px] shrink-0 mt-px`}>{num}</span>
+              <span className={`text-[13px] leading-[1.5] ${highlight ? 'text-white/80' : 'text-white/60'} ${bold ? 'font-medium' : ''}`}>
                 {bold ? <strong className="text-white/85 font-semibold">{text}</strong> : text}
               </span>
             </li>
